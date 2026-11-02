@@ -28,6 +28,10 @@ def normalize_gemini_key(value: str) -> str:
     return match.group(0) if match else text.strip("`'\" ")
 
 
+def valid_gemini_key_format(value: str) -> bool:
+    return bool(re.fullmatch(r"AIza[A-Za-z0-9_-]{20,}", normalize_gemini_key(value)))
+
+
 def route_mode(user_text: str) -> str:
     """Choose the lightest mode that can answer the request reliably."""
     text = str(user_text).casefold()
@@ -78,7 +82,8 @@ def validate_gemini_key(key: str, verify_generation: bool = False) -> str:
     try:
         response = requests.get(
             "https://generativelanguage.googleapis.com/v1beta/models",
-            params={"key": key}, headers={"User-Agent": "JARVIS-V6/6.0"}, timeout=(8, 25),
+            params={"key": key, "pageSize": 100},
+            headers={"User-Agent": "JARVIS-V6/6.0"}, timeout=(12, 60),
         )
     except requests.RequestException as exc:
         raise LLMError(_network_error(exc)) from exc
@@ -105,10 +110,17 @@ def validate_gemini_key(key: str, verify_generation: bool = False) -> str:
                 params={"key": key}, headers={"User-Agent": "JARVIS-V6/6.0"},
                 json={"contents": [{"role": "user", "parts": [{"text": "Reply with exactly: CONNECTED"}]}],
                       "generationConfig": {"temperature": 0, "maxOutputTokens": 12}},
-                timeout=(8, 30),
+                timeout=(12, 60),
             )
+        except requests.Timeout:
+            return (f"Gemini key verified with {model}. The optional generation test timed out, "
+                    "so the key was saved; use Fast Chat to retry.")
         except requests.RequestException as exc:
-            raise LLMError(_network_error(exc)) from exc
+            return (f"Gemini key verified with {model}. The optional generation test could not finish "
+                    f"({_network_error(exc)}); the key was saved.")
+        if generated.status_code == 429:
+            return (f"Gemini key verified with {model}, but Google reports that its current quota is exhausted. "
+                    "The key was saved for later use.")
         if generated.status_code >= 400:
             raise _gemini_rejection(generated, "generation test")
         try:
@@ -364,7 +376,7 @@ class LLMClient:
             response = self._post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                 params={"key": key}, json=payload,
-                timeout=(8, 60 if mode != "chat" else 35),
+                timeout=(12, 120 if mode != "chat" else 75),
             )
         except requests.Timeout as exc:
             raise LLMError("Gemini took too long to answer. Check your internet and try again.") from exc

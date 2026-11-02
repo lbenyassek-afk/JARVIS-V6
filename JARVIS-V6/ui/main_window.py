@@ -23,7 +23,7 @@ from core.config import load_config, save_config
 from core.conversation import delete_history, recent_messages
 from core.intent import is_weather_query, quick_reply, requested_location
 from core.local_core import respond as local_core_response
-from core.llm import LLMClient, normalize_gemini_key, route_mode, validate_gemini_key
+from core.llm import LLMClient, normalize_gemini_key, route_mode, valid_gemini_key_format, validate_gemini_key
 from core.session import VoiceSession
 from core.workspace import save as save_record
 from ui.workspace import WorkspaceDialog
@@ -531,7 +531,11 @@ class ApiKeyDialog(QDialog):
         remove.clicked.connect(self._remove)
         self.test_button = QPushButton("2  TEST AND SAVE KEY"); self.test_button.setObjectName("primary")
         self.test_button.clicked.connect(self._test)
-        row.addWidget(remove); row.addStretch(); row.addWidget(self.test_button); layout.addLayout(row)
+        self.save_button = QPushButton("SAVE SECURELY WITHOUT LIVE TEST")
+        self.save_button.clicked.connect(self._save_without_test)
+        row.addWidget(remove); row.addStretch(); layout.addLayout(row)
+        connect_row = QHBoxLayout(); connect_row.addWidget(self.save_button); connect_row.addWidget(self.test_button)
+        layout.addLayout(connect_row)
 
     def _paste(self):
         value = QApplication.clipboard().text().strip()
@@ -567,6 +571,18 @@ class ApiKeyDialog(QDialog):
             self._failed("Gemini connected, but secure storage failed: " + str(exc)); return
         self.key.clear(); self.status.setText("● " + str(message) + " Key stored securely.")
         self.connected.emit(); QTimer.singleShot(500, self.accept)
+
+    def _save_without_test(self):
+        candidate = normalize_gemini_key(self.key.text())
+        if not valid_gemini_key_format(candidate):
+            self.status.setText("● Gemini API keys begin with AIza. Paste the key from Google AI Studio.")
+            self.key.setFocus(); return
+        set_secret("gemini_api_key", candidate)
+        if get_secret("gemini_api_key") != candidate:
+            self.status.setText("● Windows Credential Manager could not store the key."); return
+        self.pending_key = candidate; self.key.clear()
+        self.status.setText("● Key stored securely. Live Gemini connection has not been verified.")
+        self.connected.emit(); QTimer.singleShot(700, self.accept)
 
     def _failed(self, message):
         self.status.setText("● " + str(message))

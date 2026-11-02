@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from core import backup, capabilities, config, instructions, local_core, manager_prompt, memory, metrics, permissions, planner, plugin_runtime, plugins, prompt, recovery, weather, providers, workspace
 from core.intent import is_weather_query, quick_reply, requested_location
-from core.llm import LLMClient, LLMError, normalize_gemini_key, route_mode, validate_gemini_key
+from core.llm import LLMClient, LLMError, normalize_gemini_key, route_mode, valid_gemini_key_format, validate_gemini_key
 from core.skills import Action, Registry
 from core.tasks import Step, TaskExecutor
 from core.voice import _spoken_text
@@ -321,6 +321,20 @@ class CoreTests(unittest.TestCase):
     def test_gemini_key_can_be_extracted_from_pasted_text(self):
         key = "AIza" + "A" * 32
         self.assertEqual(normalize_gemini_key(f"Here is the key: `{key}`\n"), key)
+        self.assertTrue(valid_gemini_key_format(key))
+        self.assertFalse(valid_gemini_key_format("AQ.oauth-token"))
+
+    def test_verified_key_is_not_rejected_when_optional_generation_times_out(self):
+        models = unittest.mock.Mock(status_code=200)
+        models.json.return_value = {"models": [{
+            "name": "models/gemini-3.5-flash-lite",
+            "supportedGenerationMethods": ["generateContent"],
+        }]}
+        import requests
+        with patch("core.llm.requests.get", return_value=models), \
+             patch("core.llm.requests.post", side_effect=requests.Timeout):
+            result = validate_gemini_key("AIza" + "A" * 32, True)
+        self.assertIn("key was saved", result)
 
     def test_custom_instructions_are_separate_and_reject_secrets(self):
         instructions.save("Be concise and prioritize schoolwork.")
