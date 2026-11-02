@@ -71,6 +71,15 @@ class V6Tests(unittest.TestCase):
         self.assertEqual(modes, ['orb', 'core', 'face', 'hybrid', 'minimal'])
         self.assertEqual(set(modes), set(PRESENCE_STATUS))
 
+    def test_v6_appearance_themes_are_coordinated_and_customizable(self):
+        from ui.main_window import THEME_PRESETS, resolve_theme
+        self.assertEqual(len(THEME_PRESETS), 6)
+        self.assertEqual(resolve_theme({'appearance_profile': 'arctic'})['accent'], '#65C7FF')
+        custom = resolve_theme({'appearance_profile': 'obsidian', 'accent_color': '#12abef'})
+        self.assertEqual(custom['accent'], '#12ABEF')
+        invalid = resolve_theme({'appearance_profile': 'obsidian', 'accent_color': 'blue'})
+        self.assertEqual(invalid['accent'], THEME_PRESETS['obsidian']['accent'])
+
     def test_conversation_contexts_are_isolated(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(config, 'APP_DIR', Path(tmp)):
             with patch.object(config, 'load_config', return_value={'assistant': {'active_mode': 'school'}}):

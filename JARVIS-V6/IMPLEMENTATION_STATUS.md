@@ -5,6 +5,8 @@
 - Original V6 application icon built around a recognizable J-reactor silhouette.
 - Minimal presence panel with saved Energy Orb, Reactor Core, HUD Face, Hybrid
   and Minimal Assistant designs selectable from Home or Settings.
+- Coordinated appearance studio with six minimal themes, validated custom accent
+  colours, live preview and immediate application across the HUD and presence visual.
 - Independent V6 application, storage, credential, installer and update identities.
 - Inherited V5.3 chat, Gemini diagnostics, voice, memory encryption, recovery,
   backups, workspaces, permissions and bounded desktop actions.

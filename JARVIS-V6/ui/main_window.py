@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import queue
+import re
 import threading
 from datetime import datetime
 
@@ -53,6 +54,20 @@ BLUE = QColor("#9EA8B2")
 AMBER = QColor("#C8CED5")
 INK = "#050607"
 PANEL = "rgba(12, 14, 16, 238)"
+THEME_PRESETS = {
+    "obsidian": {"label": "Obsidian Amber", "background": "#050607", "surface": "#0C0E10",
+                 "text": "#EDF1F4", "muted": "#858C93", "accent": "#E8A23A"},
+    "arctic": {"label": "Arctic Blue", "background": "#04070A", "surface": "#0A1015",
+               "text": "#ECF6FC", "muted": "#7E929F", "accent": "#65C7FF"},
+    "titanium": {"label": "Titanium Mono", "background": "#060708", "surface": "#101214",
+                 "text": "#F1F2F3", "muted": "#8D9297", "accent": "#CED4DA"},
+    "crimson": {"label": "Arc Crimson", "background": "#080405", "surface": "#13090B",
+                "text": "#F7ECEE", "muted": "#A18489", "accent": "#FF5E6C"},
+    "emerald": {"label": "Command Emerald", "background": "#030806", "surface": "#09130F",
+                "text": "#ECF7F2", "muted": "#78958A", "accent": "#62D99B"},
+    "violet": {"label": "Neural Violet", "background": "#06050A", "surface": "#100D17",
+               "text": "#F2EFFA", "muted": "#9187A2", "accent": "#A78BFA"},
+}
 PRESENCE_MODES = (
     ("ENERGY ORB", "orb"),
     ("REACTOR CORE", "core"),
@@ -69,9 +84,20 @@ PRESENCE_STATUS = {
 }
 
 
+def resolve_theme(interface=None):
+    interface = interface or load_config().get("interface", {})
+    name = str(interface.get("appearance_profile", "obsidian"))
+    palette = dict(THEME_PRESETS.get(name, THEME_PRESETS["obsidian"]))
+    custom = str(interface.get("accent_color", "")).strip().upper()
+    if re.fullmatch(r"#[0-9A-F]{6}", custom):
+        palette["accent"] = custom
+    palette["name"] = name if name in THEME_PRESETS else "obsidian"
+    return palette
+
+
 class HudBackdrop(QWidget):
     def __init__(self):
-        super().__init__(); self.scan = 0
+        super().__init__(); self.scan = 0; self.palette = resolve_theme()
         profile = load_config().get("interface", {}).get("motion_profile", "adaptive")
         timer = QTimer(self); timer.timeout.connect(self._animate)
         timer.start(90 if profile == "reduced" else 32 if profile == "cinematic" else 48)
@@ -79,22 +105,28 @@ class HudBackdrop(QWidget):
     def _animate(self):
         self.scan = (self.scan + 2) % max(1, self.height()); self.update()
 
+    def set_theme(self, palette):
+        self.palette = dict(palette); self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        base = QColor(self.palette["background"]); accent = QColor(self.palette["accent"])
         background = QRadialGradient(QPointF(self.width() * .68, self.height() * .43), self.width() * .72)
-        background.setColorAt(0, QColor(24, 28, 32)); background.setColorAt(.46, QColor(10, 12, 14))
-        background.setColorAt(1, QColor(3, 4, 5)); painter.fillRect(self.rect(), background)
-        painter.setPen(QPen(QColor(220, 228, 235, 12), 1))
+        glow = QColor(accent); glow.setAlpha(28)
+        background.setColorAt(0, glow); background.setColorAt(.46, QColor(self.palette["surface"]))
+        background.setColorAt(1, base.darker(125)); painter.fillRect(self.rect(), background)
+        grid = QColor(accent); grid.setAlpha(12); painter.setPen(QPen(grid, 1))
         spacing = 42
         for x in range(0, self.width(), spacing): painter.drawLine(x, 0, x, self.height())
         for y in range(0, self.height(), spacing): painter.drawLine(0, y, self.width(), y)
-        painter.setPen(QPen(QColor(230, 236, 242, 19), 1))
+        dots = QColor(accent); dots.setAlpha(19); painter.setPen(QPen(dots, 1))
         for x in range(20, self.width(), 84):
             for y in range(20, self.height(), 84): painter.drawPoint(x, y)
         scan_gradient = QLinearGradient(0, self.scan - 35, 0, self.scan + 35)
-        scan_gradient.setColorAt(0, QColor(238, 243, 248, 0)); scan_gradient.setColorAt(.5, QColor(238, 243, 248, 10))
-        scan_gradient.setColorAt(1, QColor(238, 243, 248, 0)); painter.fillRect(0, self.scan - 35, self.width(), 70, scan_gradient)
-        painter.setPen(QPen(QColor(205, 213, 221, 60), 2))
+        scan = QColor(accent); scan.setAlpha(10)
+        scan_gradient.setColorAt(0, QColor(0, 0, 0, 0)); scan_gradient.setColorAt(.5, scan)
+        scan_gradient.setColorAt(1, QColor(0, 0, 0, 0)); painter.fillRect(0, self.scan - 35, self.width(), 70, scan_gradient)
+        corner = QColor(accent); corner.setAlpha(60); painter.setPen(QPen(corner, 2))
         length, pad = 55, 12
         for x, y, sx, sy in ((pad, pad, 1, 1), (self.width()-pad, pad, -1, 1),
                              (pad, self.height()-pad, 1, -1), (self.width()-pad, self.height()-pad, -1, -1)):
@@ -137,6 +169,10 @@ class BootOverlay(QFrame):
 class AudioWaveform(QWidget):
     def __init__(self):
         super().__init__(); self.values = [0.04] * 36; self.setFixedHeight(72)
+        self.accent = QColor(resolve_theme()["accent"])
+
+    def set_theme(self, palette):
+        self.accent = QColor(palette["accent"]); self.update()
 
     def set_level(self, value: float):
         self.values = self.values[1:] + [max(.02, min(1.0, float(value)))]; self.update()
@@ -144,13 +180,15 @@ class AudioWaveform(QWidget):
     def paintEvent(self, _event):
         painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         center = self.height() / 2; width = self.width() / max(1, len(self.values))
-        pen = QPen(QColor(225, 231, 237, 205), max(1.4, width * .28))
+        wave = QColor(self.accent.lighter(145)); wave.setAlpha(215)
+        pen = QPen(wave, max(1.4, width * .28))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap); painter.setPen(pen)
         for index, value in enumerate(self.values):
             height = 4 + value * (self.height() * .72)
             x = (index + .5) * width
             painter.drawLine(QPointF(x, center - height / 2), QPointF(x, center + height / 2))
-        painter.setPen(QPen(QColor(255, 193, 100, 35), 1)); painter.drawLine(0, int(center), self.width(), int(center))
+        baseline = QColor(self.accent); baseline.setAlpha(40)
+        painter.setPen(QPen(baseline, 1)); painter.drawLine(0, int(center), self.width(), int(center))
 
 
 class Task(QObject):
@@ -327,6 +365,7 @@ class Reactor(QWidget):
         self.energy = 0.25
         self.state = "ONLINE"
         self.visual_mode = "hybrid"
+        self.set_theme(resolve_theme())
         self.setMinimumSize(190, 190)
         self.setMaximumSize(260, 260)
         timer = QTimer(self)
@@ -343,13 +382,19 @@ class Reactor(QWidget):
         self.visual_mode = mode if mode in ("core", "orb", "face", "hybrid", "minimal") else "orb"
         self.update()
 
+    def set_theme(self, palette):
+        self.accent = QColor(palette["accent"])
+        self.text_color = QColor(palette["text"])
+        self.surface = QColor(palette["surface"])
+        self.update()
+
     def _tick(self):
         self.angle = (self.angle + 0.8 + self.energy * 1.4) % 360
         self.energy += (0.28 - self.energy) * 0.025
         self.update()
 
     def _paint_state(self, painter, center, size):
-        painter.setPen(QColor("#D9D5CD"))
+        painter.setPen(self.text_color)
         painter.setFont(QFont("Segoe UI", max(8, int(size * .035)), QFont.Weight.DemiBold))
         painter.drawText(QRectF(0, center.y() + size * .39, self.width(), 26),
                          Qt.AlignmentFlag.AlignHCenter, self.state)
@@ -358,28 +403,32 @@ class Reactor(QWidget):
         pulse = 1 + math.sin(self.angle * .075) * .025
         for radius, alpha in ((.43, 10), (.35, 22), (.27, 42)):
             glow = QRadialGradient(center, size * radius)
-            glow.setColorAt(0, QColor(255, 169, 54, alpha * 2))
-            glow.setColorAt(1, QColor(255, 140, 20, 0))
+            centre = QColor(self.accent); centre.setAlpha(alpha * 2)
+            edge = QColor(self.accent); edge.setAlpha(0)
+            glow.setColorAt(0, centre); glow.setColorAt(1, edge)
             painter.setBrush(glow); painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(center, size * radius, size * radius)
         radius = size * .17 * pulse
         sphere = QRadialGradient(center - QPointF(radius * .35, radius * .42), radius * 1.55)
-        sphere.setColorAt(0, QColor("#FFFDF5")); sphere.setColorAt(.16, QColor("#FFE4A3"))
-        sphere.setColorAt(.48, QColor("#F3A52F")); sphere.setColorAt(.78, QColor("#8B3F08"))
-        sphere.setColorAt(1, QColor("#140A04"))
-        painter.setBrush(sphere); painter.setPen(QPen(QColor(255, 203, 122, 170), 1.5))
+        sphere.setColorAt(0, QColor("#FFFFFF")); sphere.setColorAt(.16, self.accent.lighter(165))
+        sphere.setColorAt(.48, self.accent); sphere.setColorAt(.78, self.accent.darker(185))
+        sphere.setColorAt(1, self.surface.darker(180))
+        rim = QColor(self.accent.lighter(135)); rim.setAlpha(185)
+        painter.setBrush(sphere); painter.setPen(QPen(rim, 1.5))
         painter.drawEllipse(center, radius, radius)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         for factor, speed, alpha in ((.25, 1.0, 150), (.32, -.65, 85), (.38, .35, 42)):
             r = size * factor; rect = QRectF(center.x()-r, center.y()-r, r*2, r*2)
-            painter.setPen(QPen(QColor(255, 185, 74, alpha), 1.4))
+            arc = QColor(self.accent); arc.setAlpha(alpha); painter.setPen(QPen(arc, 1.4))
             start = int(self.angle * speed * 16)
             painter.drawArc(rect, start, 110 * 16); painter.drawArc(rect, start + 190 * 16, 75 * 16)
         self._paint_state(painter, center, size)
 
     def _paint_face_only(self, painter, center, size):
         halo = QRadialGradient(center, size * .42)
-        halo.setColorAt(0, QColor(255, 165, 45, 26)); halo.setColorAt(1, QColor(255, 140, 20, 0))
+        halo_centre = QColor(self.accent); halo_centre.setAlpha(28)
+        halo_edge = QColor(self.accent); halo_edge.setAlpha(0)
+        halo.setColorAt(0, halo_centre); halo.setColorAt(1, halo_edge)
         painter.setBrush(halo); painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(center, size * .42, size * .42)
         face = QPainterPath(); face.moveTo(center.x(), center.y() - size * .31)
@@ -387,28 +436,31 @@ class Reactor(QWidget):
         face.cubicTo(center.x()-size*.10, center.y()+size*.36, center.x()-size*.04, center.y()+size*.39, center.x(), center.y()+size*.40)
         face.cubicTo(center.x()+size*.04, center.y()+size*.39, center.x()+size*.10, center.y()+size*.36, center.x()+size*.18, center.y()+size*.25)
         face.cubicTo(center.x()+size*.29, center.y(), center.x()+size*.23, center.y()-size*.29, center.x(), center.y()-size*.31)
-        painter.setBrush(Qt.BrushStyle.NoBrush); painter.setPen(QPen(QColor(205, 151, 82, 105), 1.4)); painter.drawPath(face)
+        face_color = QColor(self.accent); face_color.setAlpha(115)
+        painter.setBrush(Qt.BrushStyle.NoBrush); painter.setPen(QPen(face_color, 1.4)); painter.drawPath(face)
         eye_y = center.y() - size * .055
         for side in (-1, 1):
             eye = QPainterPath(); eye.moveTo(center.x()+side*size*.055, eye_y)
             eye.lineTo(center.x()+side*size*.14, eye_y-size*.025); eye.lineTo(center.x()+side*size*.21, eye_y)
-            eye_pen = QPen(QColor(255, 222, 159, 230), 2.2)
+            eye_color = QColor(self.accent.lighter(155)); eye_color.setAlpha(235)
+            eye_pen = QPen(eye_color, 2.2)
             eye_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(eye_pen); painter.drawPath(eye)
-        painter.setPen(QPen(QColor(255, 177, 69, 65), 1))
+        mouth = QColor(self.accent); mouth.setAlpha(70); painter.setPen(QPen(mouth, 1))
         painter.drawLine(QPointF(center.x()-size*.06, center.y()+size*.18), QPointF(center.x()+size*.06, center.y()+size*.18))
         self._paint_state(painter, center, size)
 
     def _paint_minimal(self, painter, center, size):
         card = QRectF(size*.10, size*.18, self.width()-size*.20, size*.54)
-        painter.setBrush(QColor(13, 14, 14, 230)); painter.setPen(QPen(QColor(255, 255, 255, 28), 1))
+        card_color = QColor(self.surface); card_color.setAlpha(235)
+        painter.setBrush(card_color); painter.setPen(QPen(QColor(255, 255, 255, 28), 1))
         painter.drawRoundedRect(card, 18, 18)
         painter.setFont(QFont("Segoe UI", max(30, int(size*.20)), QFont.Weight.Bold))
-        painter.setPen(QColor("#E8B66C")); painter.drawText(card.adjusted(18, 4, -18, -25), Qt.AlignmentFlag.AlignCenter, "J")
+        painter.setPen(self.accent); painter.drawText(card.adjusted(18, 4, -18, -25), Qt.AlignmentFlag.AlignCenter, "J")
         painter.setFont(QFont("Consolas", max(7, int(size*.032)), QFont.Weight.DemiBold))
         painter.setPen(QColor("#A39C91")); painter.drawText(card.adjusted(8, 0, -8, -12), Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, self.state)
-        for index, color in enumerate(("#E8B66C", "#8C9298", "#8C9298", "#8C9298")):
-            painter.setBrush(QColor(color)); painter.setPen(Qt.PenStyle.NoPen)
+        for index in range(4):
+            painter.setBrush(self.accent if index == 0 else QColor("#8C9298")); painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QPointF(center.x()-24+index*16, card.bottom()+18), 2.2, 2.2)
 
     def paintEvent(self, _event):
@@ -426,9 +478,10 @@ class Reactor(QWidget):
 
         # Volumetric halo behind the geometry.
         halo = QRadialGradient(center, size * .42)
-        halo.setColorAt(0, QColor(255, 170, 43, 105))
-        halo.setColorAt(.35, QColor(151, 78, 14, 45))
-        halo.setColorAt(1, QColor(20, 9, 0, 0))
+        halo_near = QColor(self.accent); halo_near.setAlpha(105)
+        halo_mid = QColor(self.accent.darker(175)); halo_mid.setAlpha(45)
+        halo_far = QColor(self.accent); halo_far.setAlpha(0)
+        halo.setColorAt(0, halo_near); halo.setColorAt(.35, halo_mid); halo.setColorAt(1, halo_far)
         painter.setBrush(halo); painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(center, size * .43 * pulse, size * .43 * pulse)
 
@@ -438,8 +491,8 @@ class Reactor(QWidget):
         yaw = math.radians(self.angle * .72)
         pitch = math.radians(58 + math.sin(self.angle * .018) * 8)
         segments = []
-        rings = ((.35, 0.0, CYAN, 2.4), (.29, 1.15, AMBER, 1.8),
-                 (.235, 2.3, QColor("#FFD183"), 1.5))
+        rings = ((.35, 0.0, self.text_color, 2.4), (.29, 1.15, self.accent, 1.8),
+                 (.235, 2.3, self.accent.lighter(145), 1.5))
         for ring_index, (radius, tilt, color, width) in enumerate(rings):
             count = 96
             points = []
@@ -469,9 +522,9 @@ class Reactor(QWidget):
 
         # Mechanical outer chassis, shaded around the circumference.
         chassis = QConicalGradient(center, -self.angle * 1.4)
-        chassis.setColorAt(0, QColor("#241508")); chassis.setColorAt(.18, QColor("#FFF0C9"))
-        chassis.setColorAt(.36, QColor("#100B07")); chassis.setColorAt(.62, QColor("#E89122"))
-        chassis.setColorAt(.82, QColor("#63340C")); chassis.setColorAt(1, QColor("#241508"))
+        chassis.setColorAt(0, self.accent.darker(260)); chassis.setColorAt(.18, self.accent.lighter(175))
+        chassis.setColorAt(.36, self.surface.darker(155)); chassis.setColorAt(.62, self.accent)
+        chassis.setColorAt(.82, self.accent.darker(185)); chassis.setColorAt(1, self.accent.darker(260))
         painter.setBrush(Qt.BrushStyle.NoBrush); painter.setPen(QPen(chassis, size * .022))
         painter.drawEllipse(center, size * .265 * pulse, size * .265 * pulse)
 
@@ -479,10 +532,10 @@ class Reactor(QWidget):
         # a flat disc. The small reflected flare moves with the orbit camera.
         core_radius = size * .112 * pulse
         sphere = QRadialGradient(center - QPointF(core_radius * .34, core_radius * .38), core_radius * 1.5)
-        sphere.setColorAt(0, QColor("#FFFFFF")); sphere.setColorAt(.14, QColor("#FFF1C4"))
-        sphere.setColorAt(.42, QColor("#FFC157")); sphere.setColorAt(.72, QColor("#D8790D"))
-        sphere.setColorAt(1, QColor("#2B1203"))
-        painter.setBrush(sphere); painter.setPen(QPen(QColor("#FFE6A8"), 2.4))
+        sphere.setColorAt(0, QColor("#FFFFFF")); sphere.setColorAt(.14, self.accent.lighter(175))
+        sphere.setColorAt(.42, self.accent.lighter(115)); sphere.setColorAt(.72, self.accent.darker(145))
+        sphere.setColorAt(1, self.surface.darker(190))
+        painter.setBrush(sphere); painter.setPen(QPen(self.accent.lighter(150), 2.4))
         painter.drawEllipse(center, core_radius, core_radius)
         painter.setBrush(QColor(255, 255, 255, 125)); painter.setPen(Qt.PenStyle.NoPen)
         flare = QPointF(center.x() - core_radius * .36 + math.cos(yaw) * 3,
@@ -496,7 +549,8 @@ class Reactor(QWidget):
             px = center.x() + math.cos(phase) * radius
             py = center.y() + math.sin(phase) * radius * (.42 + (i % 2) * .16)
             particle = 1.2 + (math.sin(phase * 1.7) + 1) * 1.1
-            painter.setBrush(QColor(255, 178, 64, 80 + (i % 5) * 28))
+            particle_color = QColor(self.accent); particle_color.setAlpha(80 + (i % 5) * 28)
+            painter.setBrush(particle_color)
             painter.drawEllipse(QPointF(px, py), particle, particle)
 
         # Cinematic targeting reticle: independent rings and radial data ticks.
@@ -504,11 +558,13 @@ class Reactor(QWidget):
         for radius_factor, speed, alpha in ((.34, 1.0, 105), (.39, -1.35, 62), (.44, .55, 34)):
             radius = size * radius_factor
             rect = QRectF(center.x() - radius, center.y() - radius, radius * 2, radius * 2)
-            painter.setPen(QPen(QColor(255, 177, 59, alpha), max(.8, size * .003)))
+            arc_color = QColor(self.accent); arc_color.setAlpha(alpha)
+            painter.setPen(QPen(arc_color, max(.8, size * .003)))
             start = int((self.angle * speed) * 16)
             painter.drawArc(rect, start, 68 * 16); painter.drawArc(rect, start + 132 * 16, 42 * 16)
             painter.drawArc(rect, start + 226 * 16, 88 * 16)
-        painter.setPen(QPen(QColor(255, 204, 122, 115), max(.7, size * .0025)))
+        tick_color = QColor(self.accent.lighter(130)); tick_color.setAlpha(115)
+        painter.setPen(QPen(tick_color, max(.7, size * .0025)))
         for index in range(72):
             angle = math.radians(index * 5 + self.angle * (-.22 if index % 3 else .15))
             outer = size * (.455 if index % 6 else .475)
@@ -516,7 +572,7 @@ class Reactor(QWidget):
             a = QPointF(center.x() + math.cos(angle) * inner, center.y() + math.sin(angle) * inner)
             b = QPointF(center.x() + math.cos(angle) * outer, center.y() + math.sin(angle) * outer)
             painter.drawLine(a, b)
-        painter.setPen(QPen(QColor(255, 185, 75, 40), 1))
+        cross_color = QColor(self.accent); cross_color.setAlpha(40); painter.setPen(QPen(cross_color, 1))
         painter.drawLine(QPointF(center.x() - size * .48, center.y()), QPointF(center.x() + size * .48, center.y()))
         painter.drawLine(QPointF(center.x(), center.y() - size * .48), QPointF(center.x(), center.y() + size * .48))
 
@@ -535,7 +591,8 @@ class Reactor(QWidget):
             face.cubicTo(center.x() + size * .31, center.y() - size * .05,
                          center.x() + size * .25, center.y() - size * .35,
                          center.x(), center.y() - size * .37)
-            painter.setPen(QPen(QColor(255, 181, 70, 125), max(1.0, size * .004)))
+            face_color = QColor(self.accent); face_color.setAlpha(125)
+            painter.setPen(QPen(face_color, max(1.0, size * .004)))
             painter.drawPath(face)
             eye_y = center.y() - size * .075
             for side in (-1, 1):
@@ -543,16 +600,19 @@ class Reactor(QWidget):
                 eye.moveTo(center.x() + side * size * .07, eye_y)
                 eye.lineTo(center.x() + side * size * .15, eye_y - size * .025)
                 eye.lineTo(center.x() + side * size * .22, eye_y + size * .005)
-                painter.setPen(QPen(QColor(255, 236, 193, 220), max(1.2, size * .006)))
+                eye_color = QColor(self.accent.lighter(160)); eye_color.setAlpha(225)
+                painter.setPen(QPen(eye_color, max(1.2, size * .006)))
                 painter.drawPath(eye)
-                painter.setPen(QPen(QColor(255, 177, 69, 145), max(1.0, size * .003)))
+                detail_color = QColor(self.accent); detail_color.setAlpha(145)
+                painter.setPen(QPen(detail_color, max(1.0, size * .003)))
                 painter.drawLine(QPointF(center.x() + side * size * .255, center.y() - size * .13),
                                  QPointF(center.x() + side * size * .28, center.y() + size * .03))
-            painter.setPen(QPen(QColor(255, 185, 77, 90), max(.8, size * .0025)))
+            mouth_color = QColor(self.accent); mouth_color.setAlpha(90)
+            painter.setPen(QPen(mouth_color, max(.8, size * .0025)))
             painter.drawLine(QPointF(center.x() - size * .07, center.y() + size * .22),
                              QPointF(center.x() + size * .07, center.y() + size * .22))
 
-        painter.setPen(QColor("#FFF1D1"))
+        painter.setPen(self.text_color)
         painter.setFont(QFont("Segoe UI", max(9, int(size * .025)), QFont.Weight.DemiBold))
         painter.drawText(QRectF(0, center.y() + size * .40, self.width(), 30),
                          Qt.AlignmentFlag.AlignHCenter, self.state)
@@ -749,6 +809,20 @@ class SettingsDialog(QDialog):
         self.screen_observation = QCheckBox(); self.screen_observation.setChecked(cfg["desktop"].get("screen_observation", True))
         self.automatic_actions = QCheckBox()
         self.automatic_actions.setChecked(cfg.get("permissions", {}).get("low_risk", "automatic") == "automatic")
+        self.appearance = QComboBox()
+        for value, theme in THEME_PRESETS.items():
+            self.appearance.addItem(theme["label"], value)
+        self.appearance.setCurrentIndex(max(
+            0, self.appearance.findData(cfg["interface"].get("appearance_profile", "obsidian"))))
+        self.accent_color = QLineEdit(cfg["interface"].get("accent_color", ""))
+        self.accent_color.setPlaceholderText("Optional custom accent, for example #65C7FF")
+        self.accent_color.setMaxLength(7)
+        self.appearance_preview = QLabel("  JARVIS APPEARANCE PREVIEW  ")
+        self.appearance_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.appearance_preview.setMinimumHeight(38)
+        self.appearance.currentIndexChanged.connect(self._refresh_appearance_preview)
+        self.accent_color.textChanged.connect(self._refresh_appearance_preview)
+        self._refresh_appearance_preview()
         self.adaptive_layout = QCheckBox(); self.adaptive_layout.setChecked(cfg["interface"].get("adaptive_layout", True))
         self.presence_mode = QComboBox()
         for label, value in PRESENCE_MODES:
@@ -806,6 +880,9 @@ class SettingsDialog(QDialog):
             ("Desktop Control", self.desktop),
             ("Transient screen context", self.screen_observation),
             ("Automatic low-risk actions", self.automatic_actions),
+            ("Colour theme", self.appearance),
+            ("Custom accent", self.accent_color),
+            ("Appearance preview", self.appearance_preview),
             ("Adaptive interface layout", self.adaptive_layout),
             ("Presence design", self.presence_mode),
             ("Animation profile", self.motion_profile),
@@ -833,8 +910,24 @@ class SettingsDialog(QDialog):
         dialog.exec()
         self.key_status.setText("● Key saved securely" if get_secret("gemini_api_key") else "○ Gemini key required")
 
+    def _refresh_appearance_preview(self):
+        interface = {
+            "appearance_profile": self.appearance.currentData() or "obsidian",
+            "accent_color": self.accent_color.text().strip(),
+        }
+        palette = resolve_theme(interface)
+        self.appearance_preview.setStyleSheet(
+            f"background:{palette['surface']}; color:{palette['text']}; "
+            f"border:2px solid {palette['accent']}; border-radius:8px; "
+            "font-family:Consolas; font-weight:700; letter-spacing:2px;")
+
     def _save(self):
         cfg = load_config()
+        custom_accent = self.accent_color.text().strip().upper()
+        if custom_accent and not re.fullmatch(r"#[0-9A-F]{6}", custom_accent):
+            QMessageBox.warning(self, "Invalid accent colour",
+                                "Use a six-digit colour such as #65C7FF, or leave it empty.")
+            return
         cfg["assistant"]["name"] = self.name.text().strip() or "JARVIS"
         cfg["assistant"]["user_name"] = self.user.text().strip()
         cfg["llm"]["provider"] = "gemini"
@@ -859,6 +952,9 @@ class SettingsDialog(QDialog):
         cfg["desktop"]["screen_observation"] = self.screen_observation.isChecked()
         cfg["desktop"]["automatic_approved_actions"] = self.automatic_actions.isChecked()
         cfg["permissions"]["low_risk"] = "automatic" if self.automatic_actions.isChecked() else "ask"
+        cfg["interface"]["appearance_profile"] = self.appearance.currentData()
+        cfg["interface"]["accent_color"] = custom_accent
+        cfg["interface"]["appearance_profile_version"] = 1
         cfg["interface"]["adaptive_layout"] = self.adaptive_layout.isChecked()
         cfg["interface"]["visual_mode"] = self.presence_mode.currentData()
         cfg["interface"]["presence_profile_version"] = 1
@@ -1133,7 +1229,7 @@ class MainWindow(QMainWindow):
         self.boot.finished.connect(self._first_run); self.boot.start()
 
     def _build(self):
-        root = HudBackdrop(); root.setObjectName("hudRoot"); self.setCentralWidget(root); outer = QVBoxLayout(root)
+        root = HudBackdrop(); self.backdrop = root; root.setObjectName("hudRoot"); self.setCentralWidget(root); outer = QVBoxLayout(root)
         outer.setContentsMargins(22, 18, 22, 22); outer.setSpacing(14)
         header = QHBoxLayout()
         brand = QLabel("JARVIS"); brand.setObjectName("brand")
@@ -1790,8 +1886,16 @@ class MainWindow(QMainWindow):
         self.voice_session = VoiceSession(
             voice_cfg["session_timeout"], voice_cfg["wake_phrase"], voice_cfg.get("wake_phrases"))
         self.set_presence_mode(cfg["interface"].get("visual_mode", "orb"), persist=False)
+        self.apply_appearance(cfg["interface"])
         self.append("SYSTEM", "Configuration secured and active.")
         self._sync_always_listener()
+
+    def apply_appearance(self, interface=None):
+        palette = resolve_theme(interface)
+        self.setStyleSheet(self._style(palette))
+        self.reactor.set_theme(palette)
+        self.waveform.set_theme(palette)
+        self.backdrop.set_theme(palette)
 
     def open_api_key_setup(self) -> bool:
         return ApiKeyDialog(self).exec() == QDialog.DialogCode.Accepted
@@ -1894,33 +1998,40 @@ class MainWindow(QMainWindow):
     def _recovery_failed(self, _error):
         self._recovery_pending = False
 
-    def _style(self):
+    def _style(self, palette=None):
+        palette = palette or resolve_theme()
+        background = palette["background"]
+        surface = palette["surface"]
+        text_color = palette["text"]
+        muted = palette["muted"]
+        accent = palette["accent"]
+        accent_dark = QColor(accent).darker(210).name()
         return f"""
-        QMainWindow {{ background:{INK}; }}
-        QWidget {{ background:transparent; color:#EDF1F4; font-family:'Segoe UI'; font-size:13px; }}
-        QWidget#hudRoot {{ background:{INK}; }}
-        #panel {{ background:rgba(12,12,11,232); border:1px solid rgba(255,255,255,30); border-radius:9px; }}
-        #presencePanel {{ background:rgba(8,9,10,242); border:1px solid rgba(231,235,239,32); border-radius:12px; }}
-        #presenceTitle {{ color:#8F969D; font-family:Consolas; font-size:9px; font-weight:700; letter-spacing:3px; }}
-        QComboBox#presenceSelector {{ min-width:134px; padding:7px 9px; background:rgba(255,255,255,7); border:1px solid rgba(255,255,255,27); color:#E7EAED; font-family:Consolas; font-size:9px; font-weight:650; letter-spacing:1px; }}
-        #capabilityStrip {{ color:#777E85; background:rgba(255,255,255,5); border:1px solid rgba(255,255,255,18); border-radius:7px; padding:9px 4px; font-family:Consolas; font-size:8px; font-weight:650; letter-spacing:1px; }}
-        #rail {{ background:rgba(9,9,8,242); border:1px solid rgba(255,255,255,22); border-radius:9px; }}
-        #brand {{ color:#F5F3EE; font-size:25px; font-weight:650; letter-spacing:5px; }}
-        #creator {{ color:#777570; font-size:9px; font-family:Consolas; letter-spacing:1px; }}
-        #clock {{ color:#777570; padding:0 10px; }}
-        #online {{ color:#E7E4DC; font-family:Consolas; font-weight:650; padding:7px 11px; background:rgba(255,255,255,9); border:1px solid rgba(255,255,255,30); border-radius:9px; }}
-        #engine {{ color:#A5A29B; font-family:Consolas; font-size:10px; font-weight:650; padding:0 8px; letter-spacing:1px; }}
-        #section {{ color:#E8E5DE; font-family:Consolas; font-size:10px; font-weight:650; letter-spacing:3px; padding:3px 2px 8px 2px; }}
-        #data {{ color:#777570; font-family:Consolas; font-size:9px; letter-spacing:1px; }}
-        #corelabel {{ color:#E7EBEF; font-family:Consolas; font-size:9px; font-weight:700; letter-spacing:2px; }}
-        #hint {{ color:#777570; font-family:Consolas; font-size:10px; line-height:1.4; padding:8px; }}
-        #keyStatus {{ color:#D9DEE3; font-weight:650; }}
+        QMainWindow {{ background:{background}; }}
+        QWidget {{ background:transparent; color:{text_color}; font-family:'Segoe UI'; font-size:13px; }}
+        QWidget#hudRoot {{ background:{background}; }}
+        #panel {{ background:{surface}; border:1px solid rgba(255,255,255,30); border-radius:9px; }}
+        #presencePanel {{ background:{surface}; border:1px solid {accent_dark}; border-radius:12px; }}
+        #presenceTitle {{ color:{muted}; font-family:Consolas; font-size:9px; font-weight:700; letter-spacing:3px; }}
+        QComboBox#presenceSelector {{ min-width:134px; padding:7px 9px; background:rgba(255,255,255,7); border:1px solid {accent_dark}; color:{text_color}; font-family:Consolas; font-size:9px; font-weight:650; letter-spacing:1px; }}
+        #capabilityStrip {{ color:{muted}; background:rgba(255,255,255,5); border:1px solid {accent_dark}; border-radius:7px; padding:9px 4px; font-family:Consolas; font-size:8px; font-weight:650; letter-spacing:1px; }}
+        #rail {{ background:{surface}; border:1px solid rgba(255,255,255,22); border-radius:9px; }}
+        #brand {{ color:{text_color}; font-size:25px; font-weight:650; letter-spacing:5px; }}
+        #creator {{ color:{muted}; font-size:9px; font-family:Consolas; letter-spacing:1px; }}
+        #clock {{ color:{muted}; padding:0 10px; }}
+        #online {{ color:{text_color}; font-family:Consolas; font-weight:650; padding:7px 11px; background:rgba(255,255,255,9); border:1px solid {accent_dark}; border-radius:9px; }}
+        #engine {{ color:{muted}; font-family:Consolas; font-size:10px; font-weight:650; padding:0 8px; letter-spacing:1px; }}
+        #section {{ color:{text_color}; font-family:Consolas; font-size:10px; font-weight:650; letter-spacing:3px; padding:3px 2px 8px 2px; }}
+        #data {{ color:{muted}; font-family:Consolas; font-size:9px; letter-spacing:1px; }}
+        #corelabel {{ color:{text_color}; font-family:Consolas; font-size:9px; font-weight:700; letter-spacing:2px; }}
+        #hint {{ color:{muted}; font-family:Consolas; font-size:10px; line-height:1.4; padding:8px; }}
+        #keyStatus {{ color:{accent}; font-weight:650; }}
         #dataCard {{ background:rgba(20,23,26,205); border:1px solid #343A40; border-radius:7px; }}
         #dataLabel {{ color:#89929B; font-family:Consolas; font-size:8px; }}
         #dataValue {{ color:#EDF1F4; font-family:Consolas; font-size:10px; font-weight:700; }}
         #chat {{ background:rgba(3,3,3,215); border:1px solid rgba(255,255,255,24); border-radius:7px; padding:20px; font-size:14px; }}
-        QLineEdit, QPlainTextEdit, QComboBox, QListWidget {{ background:rgba(18,18,17,245); border:1px solid rgba(255,255,255,38); border-radius:7px; padding:10px; color:#EEECE6; selection-background-color:#76501D; }}
-        QLineEdit:focus, QPlainTextEdit:focus {{ border:1px solid #AEB8C2; }}
+        QLineEdit, QPlainTextEdit, QComboBox, QListWidget {{ background:{surface}; border:1px solid rgba(255,255,255,38); border-radius:7px; padding:10px; color:{text_color}; selection-background-color:{accent_dark}; }}
+        QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{ border:1px solid {accent}; }}
         QPushButton {{ min-height:20px; background:rgba(255,255,255,7); color:#C9C6BE; border:1px solid rgba(255,255,255,35); border-radius:7px; padding:9px 14px; font-family:Consolas; font-weight:650; letter-spacing:1px; }}
         QPushButton:hover {{ background:rgba(255,255,255,15); border-color:rgba(255,255,255,80); color:#FFFFFF; }}
         QPushButton#railButton {{ text-align:left; background:transparent; border:none; color:#8E8B84; padding:10px 12px; }}
@@ -1928,8 +2039,8 @@ class MainWindow(QMainWindow):
         #railMark {{ color:#E5E9ED; font-family:Consolas; font-size:12px; font-weight:700; letter-spacing:2px; padding:8px 11px; }}
         QPushButton#mode {{ color:#A5ADB5; border-color:#343A40; }}
         QPushButton#mode:checked {{ background:rgba(44,49,54,230); border:1px solid #B9C2CA; color:#FFFFFF; }}
-        QPushButton#primary {{ background:#E2E7EB; border-color:#FFFFFF; color:#111417; }}
-        QPushButton#primary:hover {{ background:#FFFFFF; }}
+        QPushButton#primary {{ background:{accent}; border-color:{accent}; color:#080A0C; }}
+        QPushButton#primary:hover {{ background:{text_color}; border-color:{text_color}; }}
         QPushButton#danger {{ color:#FFB3A7; border-color:#8A342A; background:rgba(65,18,13,220); }}
         QPushButton#danger:hover {{ color:#FFFFFF; border-color:#FF7666; background:rgba(125,35,25,235); }}
         QPushButton#mic {{ min-width:105px; }}
@@ -1942,5 +2053,5 @@ class MainWindow(QMainWindow):
         #bootStage {{ color:#F4F1EA; font-family:Consolas; font-size:13px; font-weight:650; letter-spacing:5px; }}
         #bootDetail {{ color:#686762; font-family:Consolas; font-size:9px; letter-spacing:2px; }}
         QProgressBar {{ background:#151514; border:none; border-radius:2px; height:3px; }}
-        QProgressBar::chunk {{ background:#E3E8EC; border-radius:2px; }}
+        QProgressBar::chunk {{ background:{accent}; border-radius:2px; }}
         """

@@ -86,6 +86,8 @@ DEFAULTS = {
         "window_mode": "restore",
         "last_window_mode": "normal",
         "appearance_profile": "obsidian",
+        "accent_color": "",
+        "appearance_profile_version": 1,
         "adaptive_layout": True,
         "motion_profile": "adaptive",
         "reduced_motion": False,
