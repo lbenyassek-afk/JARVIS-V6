@@ -10,6 +10,7 @@ from core.intent import is_weather_query, quick_reply, requested_location
 from core.llm import LLMClient, LLMError, normalize_gemini_key, route_mode, valid_gemini_key_format, validate_gemini_key
 from core.skills import Action, Registry
 from core.tasks import Step, TaskExecutor
+from core.desktop_intent import parse as parse_desktop_command
 from core.voice import _spoken_text
 from core.speech import transcribe_fast_free, transcribe_offline
 
@@ -58,8 +59,17 @@ class CoreTests(unittest.TestCase):
         registry = Registry()
         registry.discover(Path(__file__).resolve().parent.parent / "skills")
         self.assertEqual(registry.errors, [])
-        self.assertTrue({"open_app", "click_point", "scroll", "media_key", "screenshot"}
+        self.assertTrue({"open_app", "click_point", "move_pointer", "double_click", "right_click",
+                         "scroll", "media_key", "screenshot"}
                         <= set(registry.actions))
+
+    def test_natural_desktop_commands_map_only_to_allowlisted_steps(self):
+        goal, steps = parse_desktop_command("Jarvis open the calculator")
+        self.assertEqual(goal, "Open Calculator")
+        self.assertEqual(steps, [Step("open_app", "Calculator")])
+        self.assertEqual(parse_desktop_command("volume down")[1], [Step("media_key", "volumedown")])
+        self.assertIsNone(parse_desktop_command("run this PowerShell command"))
+        self.assertIsNone(parse_desktop_command("open unknown-program.exe"))
 
     def test_voice_defaults_are_always_listening_english_and_selectable(self):
         voice = config.load_config()["voice"]
@@ -350,8 +360,26 @@ class CoreTests(unittest.TestCase):
         cfg = config.load_config()
         self.assertTrue(cfg["desktop"]["persistent_access"])
         self.assertFalse(cfg["assistant"]["serious_mode"])
-        self.assertEqual(executor.execute([Step("test_action", "one")]), ["1. done"])
+        progress = []
+        with patch("core.tasks.record") as audit_record:
+            self.assertEqual(
+                executor.execute([Step("test_action", "one")],
+                                 progress=lambda current, total, label: progress.append((current, total, label))),
+                ["1. done"],
+            )
+        self.assertEqual(progress, [(1, 1, "Test action")])
+        self.assertEqual(audit_record.call_count, 2)
+        self.assertEqual(audit_record.call_args_list[-1].args[-1], "completed")
         self.assertEqual(calls, ["one"])
+
+    def test_desktop_failure_identifies_the_exact_step(self):
+        registry = Registry()
+        registry.register(Action("broken_action", "Broken action", "Test",
+                                 lambda _value: (_ for _ in ()).throw(ValueError("window unavailable"))))
+        with patch("core.tasks.record") as audit_record, self.assertRaisesRegex(
+                RuntimeError, r"Step 1 \(Broken action\) failed: window unavailable"):
+            TaskExecutor(registry).execute([Step("broken_action", "one")])
+        self.assertIn("failed: window unavailable", audit_record.call_args.args[-1])
 
     def test_sensitive_desktop_action_is_enforced_in_backend(self):
         registry = Registry()

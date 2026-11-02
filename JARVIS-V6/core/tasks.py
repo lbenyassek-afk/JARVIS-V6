@@ -49,16 +49,13 @@ class TaskExecutor:
                 raise PermissionError(f"Approval required for {action.label}: {decision.reason}")
             if progress:
                 progress(index, len(steps), action.label)
-            if action.sensitive:
-                record(step.action, step.value, "started")
+            record(step.action, step.value, "started")
             try:
                 result = action.handler(step.value)
             except Exception as exc:
-                if action.sensitive:
-                    record(step.action, step.value, f"failed: {exc}")
-                raise
-            if action.sensitive:
-                record(step.action, step.value, "completed")
+                record(step.action, step.value, f"failed: {exc}")
+                raise RuntimeError(f"Step {index} ({action.label}) failed: {exc}") from exc
+            record(step.action, step.value, "completed")
             results.append(f"{index}. {result}")
             time.sleep(max(0, min(float(cfg["desktop"].get("step_delay", .35)), 3)))
         return results

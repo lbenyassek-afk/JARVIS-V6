@@ -13,6 +13,8 @@ APPS = {
     "Calculator": ("exe", "calc.exe"),
     "File Explorer": ("exe", "explorer.exe"),
     "Paint": ("exe", "mspaint.exe"),
+    "Task Manager": ("exe", "taskmgr.exe"),
+    "Snipping Tool": ("uri", "ms-screenclip:"),
     "Windows Settings": ("uri", "ms-settings:"),
     "Default Browser": ("uri", "https://www.google.com"),
 }
@@ -41,7 +43,22 @@ def type_text(value: str) -> str:
     if len(value) > 4000:
         raise ValueError("Typed text is limited to 4,000 characters")
     import pyautogui
-    pyautogui.write(value, interval=0.008)
+    import pyperclip
+    # Clipboard paste is much faster than key-by-key typing and preserves
+    # accents, symbols and non-English text. Restore the previous clipboard.
+    previous = None
+    try:
+        previous = pyperclip.paste()
+    except Exception:
+        pass
+    pyperclip.copy(value)
+    pyautogui.hotkey("ctrl", "v")
+    time.sleep(.08)
+    if previous is not None:
+        try:
+            pyperclip.copy(previous)
+        except Exception:
+            pass
     return f"Typed {len(value)} characters into the focused application."
 
 
@@ -80,6 +97,39 @@ def click_point(value: str) -> str:
         raise ValueError("Click coordinates are outside the current screen")
     pyautogui.click(x, y)
     return f"Clicked screen position {x},{y}."
+
+
+def _pointer_position(value: str) -> tuple[int, int]:
+    match = re.fullmatch(r"\s*(\d{1,5})\s*,\s*(\d{1,5})\s*", value)
+    if not match:
+        raise ValueError("Coordinates must use x,y, for example 640,360")
+    import pyautogui
+    x, y = int(match.group(1)), int(match.group(2))
+    width, height = pyautogui.size()
+    if not (0 <= x < width and 0 <= y < height):
+        raise ValueError("Coordinates are outside the current screen")
+    return x, y
+
+
+def move_pointer(value: str) -> str:
+    import pyautogui
+    x, y = _pointer_position(value)
+    pyautogui.moveTo(x, y, duration=.18)
+    return f"Moved pointer to {x},{y}."
+
+
+def double_click(value: str) -> str:
+    import pyautogui
+    x, y = _pointer_position(value)
+    pyautogui.doubleClick(x, y, interval=.12)
+    return f"Double-clicked screen position {x},{y}."
+
+
+def right_click(value: str) -> str:
+    import pyautogui
+    x, y = _pointer_position(value)
+    pyautogui.rightClick(x, y)
+    return f"Right-clicked screen position {x},{y}."
 
 
 def scroll(value: str) -> str:
@@ -124,6 +174,9 @@ SKILL = {
         {"name": "shortcut", "label": "Keyboard shortcut", "description": "Run a fixed approved keyboard shortcut.", "handler": shortcut, "values": tuple(SHORTCUTS), "sensitive": True},
         {"name": "press_key", "label": "Press approved key", "description": "Press one navigation/editing key.", "handler": press_key, "values": KEYS, "sensitive": True},
         {"name": "click_point", "label": "Click screen position", "description": "Click reviewed x,y screen coordinates.", "handler": click_point, "sensitive": True},
+        {"name": "move_pointer", "label": "Move pointer", "description": "Move to reviewed x,y screen coordinates without clicking.", "handler": move_pointer, "sensitive": True},
+        {"name": "double_click", "label": "Double-click screen position", "description": "Double-click reviewed x,y screen coordinates.", "handler": double_click, "sensitive": True},
+        {"name": "right_click", "label": "Right-click screen position", "description": "Right-click reviewed x,y screen coordinates.", "handler": right_click, "sensitive": True},
         {"name": "scroll", "label": "Scroll active window", "description": "Scroll by -20 to 20 steps.", "handler": scroll, "sensitive": True},
         {"name": "media_key", "label": "Media or volume control", "description": "Use an approved media key.", "handler": media_key, "values": MEDIA_KEYS},
         {"name": "screenshot", "label": "Save screenshot", "description": "Save the desktop to Pictures/JARVIS Screenshots.", "handler": screenshot, "sensitive": True},

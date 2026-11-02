@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from core.commands import handle_memory_command
+from core.desktop_intent import parse as parse_desktop_command
 from core.config import load_config, save_config
 from core.conversation import delete_history, recent_messages
 from core.intent import is_weather_query, quick_reply, requested_location
@@ -202,6 +203,29 @@ class Task(QObject):
     def run(self):
         try:
             self.done.emit(self.function(*self.args, **self.kwargs))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class DesktopExecution(QObject):
+    done = pyqtSignal(object)
+    failed = pyqtSignal(str)
+    progress = pyqtSignal(int, int, str)
+
+    def __init__(self, executor, steps, approved_sensitive):
+        super().__init__()
+        self.executor = executor
+        self.steps = list(steps)
+        self.approved_sensitive = bool(approved_sensitive)
+
+    def run(self):
+        try:
+            result = self.executor.execute(
+                self.steps,
+                lambda current, total, label: self.progress.emit(current, total, label),
+                self.approved_sensitive,
+            )
+            self.done.emit(result)
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -1155,24 +1179,38 @@ class ManagerPromptDialog(QDialog):
 
 
 class TaskStudio(QDialog):
-    run_plan = pyqtSignal(list)
+    run_plan = pyqtSignal(str, list)
 
     def __init__(self, registry: Registry, parent=None):
         super().__init__(parent); self.registry = registry
-        self.setWindowTitle("JARVIS // SERIOUS MODE TASK STUDIO"); self.resize(720, 540)
+        self.setWindowTitle("JARVIS // DESKTOP MISSION CONTROL"); self.resize(780, 620)
         layout = QVBoxLayout(self)
-        info = QLabel("Build an approved desktop plan. JARVIS never runs shell commands or unlisted actions.")
+        header = QHBoxLayout(); title = QLabel("MISSION PLAN"); title.setObjectName("section")
+        self.risk = QLabel("● LOW RISK"); self.risk.setObjectName("online")
+        header.addWidget(title); header.addStretch(); header.addWidget(self.risk); layout.addLayout(header)
+        info = QLabel("Create a reviewed sequence of allowlisted actions. Sensitive keyboard and mouse steps always require your approval.")
         info.setWordWrap(True); layout.addWidget(info)
-        form = QFormLayout(); self.action = QComboBox();
+        self.goal = QLineEdit(); self.goal.setPlaceholderText("What should JARVIS accomplish?")
+        layout.addWidget(self.goal)
+        form = QFormLayout(); self.action = QComboBox()
         for name, action in registry.actions.items(): self.action.addItem(action.label, name)
         self.value = QComboBox(); self.value.setEditable(True); self.action.currentIndexChanged.connect(self._values)
-        form.addRow("Action", self.action); form.addRow("Value", self.value); layout.addLayout(form); self._values()
-        add = QPushButton("ADD STEP"); add.clicked.connect(self._add); layout.addWidget(add)
+        self.action_help = QLabel(); self.action_help.setObjectName("hint"); self.action_help.setWordWrap(True)
+        form.addRow("Action", self.action); form.addRow("Value", self.value)
+        form.addRow("Effect", self.action_help); layout.addLayout(form)
+        builder = QHBoxLayout()
+        self.capture = QPushButton("USE CURRENT CURSOR"); self.capture.clicked.connect(self._capture_cursor)
+        add = QPushButton("ADD STEP"); add.setObjectName("primary"); add.clicked.connect(self._add)
+        builder.addWidget(self.capture); builder.addStretch(); builder.addWidget(add); layout.addLayout(builder)
+        self._values()
         self.steps = QListWidget(); layout.addWidget(self.steps, 1)
-        row = QHBoxLayout(); remove = QPushButton("REMOVE STEP"); remove.clicked.connect(self._remove)
-        clear = QPushButton("CLEAR PLAN"); clear.clicked.connect(self.steps.clear)
-        run = QPushButton("REVIEW & RUN PLAN"); run.clicked.connect(self._run)
-        row.addWidget(remove); row.addWidget(clear); row.addStretch(); row.addWidget(run); layout.addLayout(row)
+        row = QHBoxLayout(); up = QPushButton("↑"); up.setToolTip("Move selected step up"); up.clicked.connect(lambda: self._move(-1))
+        down = QPushButton("↓"); down.setToolTip("Move selected step down"); down.clicked.connect(lambda: self._move(1))
+        remove = QPushButton("REMOVE STEP"); remove.clicked.connect(self._remove)
+        clear = QPushButton("CLEAR PLAN"); clear.clicked.connect(self._clear)
+        run = QPushButton("REVIEW & RUN MISSION"); run.setObjectName("primary"); run.clicked.connect(self._run)
+        row.addWidget(up); row.addWidget(down); row.addWidget(remove); row.addWidget(clear)
+        row.addStretch(); row.addWidget(run); layout.addLayout(row)
 
     def _values(self):
         action = self.registry.actions.get(self.action.currentData())
@@ -1181,22 +1219,78 @@ class TaskStudio(QDialog):
             self.value.addItems(action.values); self.value.setEditable(False)
         else:
             self.value.setEditable(True); self.value.setEditText("")
+        if action:
+            decision = __import__('core.permissions', fromlist=['decide']).decide(action, self.value.currentText())
+            self.action_help.setText(action.description + "  /  " + decision.reason)
+            self.capture.setVisible(action.name in ("click_point", "move_pointer", "double_click", "right_click"))
+
+    def _capture_cursor(self):
+        try:
+            import pyautogui
+            position = pyautogui.position()
+            self.value.setEditText(f"{position.x},{position.y}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Cursor unavailable", str(exc))
+
+    def _validated_value(self, action, value):
+        value = str(value)
+        if action.name in ("type_text", "copy_text") and not value:
+            raise ValueError("Enter text for this step.")
+        if action.name in ("click_point", "move_pointer", "double_click", "right_click"):
+            if not re.fullmatch(r"\s*\d{1,5}\s*,\s*\d{1,5}\s*", value):
+                raise ValueError("Use x,y coordinates or press USE CURRENT CURSOR.")
+        if action.name == "scroll":
+            amount = int(value)
+            if not -20 <= amount <= 20 or amount == 0:
+                raise ValueError("Scroll must be from -20 to 20, excluding zero.")
+        if action.name == "wait" and not .1 <= float(value) <= 15:
+            raise ValueError("Wait must be from 0.1 to 15 seconds.")
+        return value
 
     def _add(self):
-        step = Step(str(self.action.currentData()), self.value.currentText())
-        action = self.registry.actions[step.action]
-        item = self.steps.addItem(f"{self.steps.count() + 1}. {action.label}: {step.value[:100]}")
+        action = self.registry.actions[str(self.action.currentData())]
+        try:
+            value = self._validated_value(action, self.value.currentText())
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Invalid step", str(exc)); return
+        step = Step(action.name, value)
+        self.steps.addItem("")
         self.steps.item(self.steps.count() - 1).setData(Qt.ItemDataRole.UserRole, step)
+        self._renumber(); self._update_risk()
 
     def _remove(self):
         row = self.steps.currentRow()
-        if row >= 0: self.steps.takeItem(row)
+        if row >= 0: self.steps.takeItem(row); self._renumber(); self._update_risk()
+
+    def _clear(self):
+        self.steps.clear(); self._update_risk()
+
+    def _move(self, offset):
+        row = self.steps.currentRow(); target = row + offset
+        if row < 0 or not 0 <= target < self.steps.count(): return
+        item = self.steps.takeItem(row); self.steps.insertItem(target, item); self.steps.setCurrentRow(target)
+        self._renumber()
+
+    def _renumber(self):
+        for index in range(self.steps.count()):
+            item = self.steps.item(index); step = item.data(Qt.ItemDataRole.UserRole)
+            action = self.registry.actions[step.action]
+            value = step.value.replace("\n", " ")[:110] or "—"
+            badge = "APPROVAL" if action.sensitive else "AUTO"
+            item.setText(f"{index + 1:02d}  /  {badge}  /  {action.label}  /  {value}")
+
+    def _update_risk(self):
+        sensitive = any(
+            self.registry.actions[self.steps.item(i).data(Qt.ItemDataRole.UserRole).action].sensitive
+            for i in range(self.steps.count()))
+        self.risk.setText("● APPROVAL REQUIRED" if sensitive else "● LOW RISK")
 
     def _run(self):
         plan = [self.steps.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.steps.count())]
         if not plan:
             QMessageBox.information(self, "Empty plan", "Add at least one step."); return
-        self.run_plan.emit(plan); self.accept()
+        goal = self.goal.text().strip() or "Complete reviewed desktop mission"
+        self.run_plan.emit(goal, plan); self.accept()
 
 
 class MainWindow(QMainWindow):
@@ -1211,6 +1305,7 @@ class MainWindow(QMainWindow):
         self.always_listener = None
         self.retired_listeners = []
         self._desktop_refresh_pending = False
+        self._desktop_pending = False
         self._recovery_pending = False
         self._last_recovery_state = None
         self.chat_mode = "auto"
@@ -1353,6 +1448,13 @@ class MainWindow(QMainWindow):
             "Screenshots are not stored. Sensitive keyboard, mouse, sharing and publishing actions always need approval."
         )
         info.setObjectName("hint"); info.setWordWrap(True); layout.addWidget(info)
+        mission = QFrame(); mission.setObjectName("dataCard"); mission_layout = QVBoxLayout(mission)
+        self.desktop_mission = QLabel("NO MISSION RUNNING"); self.desktop_mission.setObjectName("dataValue")
+        self.desktop_step = QLabel("Build a reviewed plan when you are ready."); self.desktop_step.setObjectName("hint")
+        self.desktop_progress = QProgressBar(); self.desktop_progress.setObjectName("desktopProgress")
+        self.desktop_progress.setRange(0, 1); self.desktop_progress.setValue(0); self.desktop_progress.setTextVisible(True)
+        mission_layout.addWidget(self.desktop_mission); mission_layout.addWidget(self.desktop_step)
+        mission_layout.addWidget(self.desktop_progress); layout.addWidget(mission)
         row = QHBoxLayout(); build = QPushButton("BUILD TASK PLAN"); build.setObjectName("primary")
         build.clicked.connect(self.open_task_studio)
         stop = QPushButton("EMERGENCY STOP  CTRL+SHIFT+Q"); stop.setObjectName("danger"); stop.clicked.connect(self.stop_task)
@@ -1563,6 +1665,7 @@ class MainWindow(QMainWindow):
                     delete_all(); result = "All long-term memories were deleted."
                 else: result = "Memory deletion cancelled."
             self.append("JARVIS", result); self.refresh_memory(); return
+        if self._try_desktop_command(text): return
         cfg = load_config()
         local = (quick_reply(text, cfg["assistant"]["name"], cfg["assistant"].get("user_name", ""))
                  if cfg["assistant"].get("quick_local_replies", True) else None)
@@ -1828,6 +1931,7 @@ class MainWindow(QMainWindow):
                 else:
                     memory_result = "Memory deletion cancelled."
             self.refresh_memory(); self._answer(memory_result); return
+        if self._try_desktop_command(transcript): return
         cfg = load_config()
         local = (quick_reply(transcript, cfg["assistant"]["name"], cfg["assistant"].get("user_name", ""))
                  if cfg["assistant"].get("quick_local_replies", True) else None)
@@ -1929,9 +2033,18 @@ class MainWindow(QMainWindow):
             return
         dialog = TaskStudio(self.registry, self); dialog.run_plan.connect(self.review_task); dialog.exec()
 
-    def review_task(self, plan):
+    def _try_desktop_command(self, text):
+        parsed = parse_desktop_command(text)
+        cfg = load_config()
+        if not parsed or not cfg["desktop"].get("enabled") or not plugin_enabled("desktop"):
+            return False
+        goal, plan = parsed
+        self.review_task(goal, plan)
+        return True
+
+    def review_task(self, goal, plan):
         try:
-            reviewed = build_execution_plan("User-reviewed desktop task", plan, self.registry,
+            reviewed = build_execution_plan(goal, plan, self.registry,
                                             load_config()["desktop"].get("max_steps", 20))
         except ValueError as exc:
             QMessageBox.warning(self, "Plan rejected", str(exc)); return
@@ -1945,8 +2058,9 @@ class MainWindow(QMainWindow):
                 if contains_sensitive else
                 "Your current permission profile confirms every desktop plan."
             )
-            answer = QMessageBox.question(self, "Approve desktop plan?",
-                summary + "\n\n" + reason + " After approval you have 3 seconds to focus the target window.")
+            answer = QMessageBox.question(self, "Approve desktop mission?",
+                reviewed.goal + "\n\n" + summary + "\n\n" + reason +
+                " After approval you have 3 seconds to focus the target window.")
             if answer != QMessageBox.StandardButton.Yes:
                 self.append("SYSTEM", "Desktop plan cancelled before execution."); return
             delay = 3000
@@ -1955,17 +2069,51 @@ class MainWindow(QMainWindow):
             delay = 750
             self.append("SYSTEM", "Approved low-risk desktop plan queued.")
         self.reactor.set_state("THINKING")
-        QTimer.singleShot(
-            delay,
-            lambda: self._task(
-                self.task_executor.execute, (plan, None, approval_required), self._task_complete))
+        self._desktop_pending = True
+        self.desktop_mission.setText(reviewed.goal.upper())
+        self.desktop_step.setText("FOCUS THE TARGET WINDOW" if delay > 1000 else "STARTING MISSION")
+        self.desktop_progress.setRange(0, len(plan)); self.desktop_progress.setValue(0)
+        self.workspace_stack.setCurrentWidget(self.desktop_page)
+        QTimer.singleShot(delay, lambda: self._begin_desktop_execution(plan, approval_required))
+
+    def _begin_desktop_execution(self, plan, approval_required):
+        if not self._desktop_pending:
+            self.desktop_step.setText("MISSION CANCELLED BEFORE START"); return
+        self._desktop_pending = False
+        thread = QThread(self)
+        task = DesktopExecution(self.task_executor, plan, approval_required); task.moveToThread(thread)
+        thread.started.connect(task.run); task.progress.connect(self._desktop_task_progress)
+        task.done.connect(self._task_complete); task.failed.connect(self._desktop_task_failed)
+        task.done.connect(thread.quit); task.failed.connect(thread.quit)
+        thread.finished.connect(task.deleteLater); thread.finished.connect(thread.deleteLater)
+        self.threads.append((thread, task))
+        thread.finished.connect(
+            lambda: self.threads.remove((thread, task)) if (thread, task) in self.threads else None)
+        thread.start()
+
+    def _desktop_task_progress(self, current, total, label):
+        self.desktop_progress.setRange(0, total); self.desktop_progress.setValue(current - 1)
+        self.desktop_step.setText(f"STEP {current} OF {total}  /  {label.upper()}")
+        self.status.setText(f"● DESKTOP {current}/{total}")
 
     def _task_complete(self, results):
-        self.append("JARVIS", "Desktop task completed:\n" + "\n".join(results)); self.reactor.set_state("ONLINE")
+        self.desktop_progress.setValue(self.desktop_progress.maximum())
+        self.desktop_step.setText("MISSION COMPLETED")
+        self.append("JARVIS", "Desktop mission completed:\n" + "\n".join(results)); self.reactor.set_state("ONLINE")
+        self.status.setText("● READY")
+        self._refresh_desktop_context()
+
+    def _desktop_task_failed(self, error):
+        cancelled = "cancel" in str(error).casefold()
+        self.desktop_step.setText("MISSION CANCELLED" if cancelled else "MISSION FAILED — CHECK CHAT")
+        self.append("SYSTEM", str(error)); self.reactor.set_state("ONLINE" if cancelled else "ERROR")
+        self.status.setText("● READY" if cancelled else "● DESKTOP ERROR")
         self._refresh_desktop_context()
 
     def stop_task(self):
-        self.task_executor.cancel(); self.append("SYSTEM", "Stop requested. JARVIS will halt before the next step.")
+        self._desktop_pending = False; self.task_executor.cancel()
+        if hasattr(self, "desktop_step"): self.desktop_step.setText("STOP REQUESTED — HALTING SAFELY")
+        self.append("SYSTEM", "Stop requested. JARVIS will halt before the next step.")
 
     def closeEvent(self, event):
         self._save_recovery(clean_exit=True)
@@ -2054,4 +2202,6 @@ class MainWindow(QMainWindow):
         #bootDetail {{ color:#686762; font-family:Consolas; font-size:9px; letter-spacing:2px; }}
         QProgressBar {{ background:#151514; border:none; border-radius:2px; height:3px; }}
         QProgressBar::chunk {{ background:{accent}; border-radius:2px; }}
+        QProgressBar#desktopProgress {{ min-height:18px; max-height:18px; color:{text_color}; background:{background}; border:1px solid {accent_dark}; border-radius:5px; font-family:Consolas; font-size:9px; text-align:center; }}
+        QProgressBar#desktopProgress::chunk {{ background:{accent}; border-radius:4px; }}
         """

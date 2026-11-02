@@ -27,6 +27,13 @@ memory, credentials, executable, installer, update channel and prerelease track.
   changes recolour the HUD, panels, controls, waveform and presence visual together.
 - Voice customization for British voice, preview, speed, pitch, volume, capture
   engine, activation behaviour and microphone selection.
+- Desktop Mission Control for goal-based allowlisted plans, mouse-position capture,
+  step reordering, live progress, emergency cancellation and encrypted action history.
+- Fast typed or spoken desktop commands for approved apps, window switching, desktop,
+  volume, media, scrolling and screenshots, routed through the same permission system.
+- Thirteen bounded desktop actions including approved applications, Unicode text,
+  clipboard, fixed shortcuts, navigation keys, pointer actions, scrolling, media,
+  screenshots and waits. Sensitive actions still require explicit approval.
 - Independent `%APPDATA%\JARVIS-V6` profile and `JARVIS-V6` Credential Manager service.
 - Separate `JARVIS V6.exe`, installer identity and prerelease workflow.
 - Local offline core for time, date, status, local memory search and capability help.
