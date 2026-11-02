@@ -21,6 +21,8 @@ memory, credentials, executable, installer, update channel and prerelease track.
 ## Alpha 1 foundation
 
 - Original V6 titanium-and-amber J-reactor icon with Windows sizes from 16 to 256 pixels.
+- Five persistent presence designs: Energy Orb, Reactor Core, HUD Face, Hybrid
+  and Minimal Assistant, selectable directly from the main window or Settings.
 - Independent `%APPDATA%\JARVIS-V6` profile and `JARVIS-V6` Credential Manager service.
 - Separate `JARVIS V6.exe`, installer identity and prerelease workflow.
 - Local offline core for time, date, status, local memory search and capability help.

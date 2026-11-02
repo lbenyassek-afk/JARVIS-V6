@@ -81,7 +81,8 @@ DEFAULTS = {
         "applications": {},
     },
     "interface": {
-        "visual_mode": "face",
+        "visual_mode": "orb",
+        "presence_profile_version": 1,
         "window_mode": "restore",
         "last_window_mode": "normal",
         "appearance_profile": "obsidian",
@@ -187,6 +188,12 @@ def load_config() -> dict:
         merged["desktop"]["enabled"] = True
         merged["desktop"]["persistent_access"] = True
         merged["plugins"]["enabled"]["desktop"] = True
+    # V6 introduces a lighter presence panel with five selectable identities.
+    # Apply the new Orb default once while preserving choices made afterwards.
+    saved_interface = data.get("interface", {}) if isinstance(data, dict) else {}
+    if int(saved_interface.get("presence_profile_version", 0)) < 1:
+        merged["interface"]["visual_mode"] = "orb"
+        merged["interface"]["presence_profile_version"] = 1
     return merged
 
 

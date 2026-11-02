@@ -53,6 +53,20 @@ BLUE = QColor("#9EA8B2")
 AMBER = QColor("#C8CED5")
 INK = "#050607"
 PANEL = "rgba(12, 14, 16, 238)"
+PRESENCE_MODES = (
+    ("ENERGY ORB", "orb"),
+    ("REACTOR CORE", "core"),
+    ("HUD FACE", "face"),
+    ("HYBRID", "hybrid"),
+    ("MINIMAL ASSISTANT", "minimal"),
+)
+PRESENCE_STATUS = {
+    "orb": "AMBIENT INTELLIGENCE ONLINE",
+    "core": "REACTOR SYSTEM ONLINE",
+    "face": "HUD PRESENCE ONLINE",
+    "hybrid": "HYBRID SYSTEM ONLINE",
+    "minimal": "ASSISTANT ONLINE",
+}
 
 
 class HudBackdrop(QWidget):
@@ -326,7 +340,7 @@ class Reactor(QWidget):
         self.update()
 
     def set_visual_mode(self, mode: str):
-        self.visual_mode = mode if mode in ("core", "face", "hybrid") else "hybrid"
+        self.visual_mode = mode if mode in ("core", "orb", "face", "hybrid", "minimal") else "orb"
         self.update()
 
     def _tick(self):
@@ -334,11 +348,80 @@ class Reactor(QWidget):
         self.energy += (0.28 - self.energy) * 0.025
         self.update()
 
+    def _paint_state(self, painter, center, size):
+        painter.setPen(QColor("#D9D5CD"))
+        painter.setFont(QFont("Segoe UI", max(8, int(size * .035)), QFont.Weight.DemiBold))
+        painter.drawText(QRectF(0, center.y() + size * .39, self.width(), 26),
+                         Qt.AlignmentFlag.AlignHCenter, self.state)
+
+    def _paint_orb(self, painter, center, size):
+        pulse = 1 + math.sin(self.angle * .075) * .025
+        for radius, alpha in ((.43, 10), (.35, 22), (.27, 42)):
+            glow = QRadialGradient(center, size * radius)
+            glow.setColorAt(0, QColor(255, 169, 54, alpha * 2))
+            glow.setColorAt(1, QColor(255, 140, 20, 0))
+            painter.setBrush(glow); painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(center, size * radius, size * radius)
+        radius = size * .17 * pulse
+        sphere = QRadialGradient(center - QPointF(radius * .35, radius * .42), radius * 1.55)
+        sphere.setColorAt(0, QColor("#FFFDF5")); sphere.setColorAt(.16, QColor("#FFE4A3"))
+        sphere.setColorAt(.48, QColor("#F3A52F")); sphere.setColorAt(.78, QColor("#8B3F08"))
+        sphere.setColorAt(1, QColor("#140A04"))
+        painter.setBrush(sphere); painter.setPen(QPen(QColor(255, 203, 122, 170), 1.5))
+        painter.drawEllipse(center, radius, radius)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for factor, speed, alpha in ((.25, 1.0, 150), (.32, -.65, 85), (.38, .35, 42)):
+            r = size * factor; rect = QRectF(center.x()-r, center.y()-r, r*2, r*2)
+            painter.setPen(QPen(QColor(255, 185, 74, alpha), 1.4))
+            start = int(self.angle * speed * 16)
+            painter.drawArc(rect, start, 110 * 16); painter.drawArc(rect, start + 190 * 16, 75 * 16)
+        self._paint_state(painter, center, size)
+
+    def _paint_face_only(self, painter, center, size):
+        halo = QRadialGradient(center, size * .42)
+        halo.setColorAt(0, QColor(255, 165, 45, 26)); halo.setColorAt(1, QColor(255, 140, 20, 0))
+        painter.setBrush(halo); painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(center, size * .42, size * .42)
+        face = QPainterPath(); face.moveTo(center.x(), center.y() - size * .31)
+        face.cubicTo(center.x() - size*.23, center.y()-size*.29, center.x()-size*.29, center.y(), center.x()-size*.18, center.y()+size*.25)
+        face.cubicTo(center.x()-size*.10, center.y()+size*.36, center.x()-size*.04, center.y()+size*.39, center.x(), center.y()+size*.40)
+        face.cubicTo(center.x()+size*.04, center.y()+size*.39, center.x()+size*.10, center.y()+size*.36, center.x()+size*.18, center.y()+size*.25)
+        face.cubicTo(center.x()+size*.29, center.y(), center.x()+size*.23, center.y()-size*.29, center.x(), center.y()-size*.31)
+        painter.setBrush(Qt.BrushStyle.NoBrush); painter.setPen(QPen(QColor(205, 151, 82, 105), 1.4)); painter.drawPath(face)
+        eye_y = center.y() - size * .055
+        for side in (-1, 1):
+            eye = QPainterPath(); eye.moveTo(center.x()+side*size*.055, eye_y)
+            eye.lineTo(center.x()+side*size*.14, eye_y-size*.025); eye.lineTo(center.x()+side*size*.21, eye_y)
+            eye_pen = QPen(QColor(255, 222, 159, 230), 2.2)
+            eye_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(eye_pen); painter.drawPath(eye)
+        painter.setPen(QPen(QColor(255, 177, 69, 65), 1))
+        painter.drawLine(QPointF(center.x()-size*.06, center.y()+size*.18), QPointF(center.x()+size*.06, center.y()+size*.18))
+        self._paint_state(painter, center, size)
+
+    def _paint_minimal(self, painter, center, size):
+        card = QRectF(size*.10, size*.18, self.width()-size*.20, size*.54)
+        painter.setBrush(QColor(13, 14, 14, 230)); painter.setPen(QPen(QColor(255, 255, 255, 28), 1))
+        painter.drawRoundedRect(card, 18, 18)
+        painter.setFont(QFont("Segoe UI", max(30, int(size*.20)), QFont.Weight.Bold))
+        painter.setPen(QColor("#E8B66C")); painter.drawText(card.adjusted(18, 4, -18, -25), Qt.AlignmentFlag.AlignCenter, "J")
+        painter.setFont(QFont("Consolas", max(7, int(size*.032)), QFont.Weight.DemiBold))
+        painter.setPen(QColor("#A39C91")); painter.drawText(card.adjusted(8, 0, -8, -12), Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, self.state)
+        for index, color in enumerate(("#E8B66C", "#8C9298", "#8C9298", "#8C9298")):
+            painter.setBrush(QColor(color)); painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(center.x()-24+index*16, card.bottom()+18), 2.2, 2.2)
+
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         center = QPointF(self.width() / 2, self.height() / 2)
         size = min(self.width(), self.height())
+        if self.visual_mode == "orb":
+            self._paint_orb(painter, center, size); return
+        if self.visual_mode == "face":
+            self._paint_face_only(painter, center, size); return
+        if self.visual_mode == "minimal":
+            self._paint_minimal(painter, center, size); return
         pulse = 1 + math.sin(self.angle * 0.08) * 0.025
 
         # Volumetric halo behind the geometry.
@@ -667,6 +750,11 @@ class SettingsDialog(QDialog):
         self.automatic_actions = QCheckBox()
         self.automatic_actions.setChecked(cfg.get("permissions", {}).get("low_risk", "automatic") == "automatic")
         self.adaptive_layout = QCheckBox(); self.adaptive_layout.setChecked(cfg["interface"].get("adaptive_layout", True))
+        self.presence_mode = QComboBox()
+        for label, value in PRESENCE_MODES:
+            self.presence_mode.addItem(label.title(), value)
+        self.presence_mode.setCurrentIndex(max(
+            0, self.presence_mode.findData(cfg["interface"].get("visual_mode", "orb"))))
         self.motion_profile = QComboBox()
         self.motion_profile.addItem("Adaptive performance", "adaptive")
         self.motion_profile.addItem("Cinematic", "cinematic")
@@ -719,6 +807,7 @@ class SettingsDialog(QDialog):
             ("Transient screen context", self.screen_observation),
             ("Automatic low-risk actions", self.automatic_actions),
             ("Adaptive interface layout", self.adaptive_layout),
+            ("Presence design", self.presence_mode),
             ("Animation profile", self.motion_profile),
             ("Update channel", self.update_channel),
             ("Instant local replies", self.quick_replies),
@@ -771,6 +860,8 @@ class SettingsDialog(QDialog):
         cfg["desktop"]["automatic_approved_actions"] = self.automatic_actions.isChecked()
         cfg["permissions"]["low_risk"] = "automatic" if self.automatic_actions.isChecked() else "ask"
         cfg["interface"]["adaptive_layout"] = self.adaptive_layout.isChecked()
+        cfg["interface"]["visual_mode"] = self.presence_mode.currentData()
+        cfg["interface"]["presence_profile_version"] = 1
         cfg["interface"]["motion_profile"] = self.motion_profile.currentData()
         cfg["interface"]["reduced_motion"] = self.motion_profile.currentData() == "reduced"
         cfg["updates"]["channel"] = self.update_channel.currentData()
@@ -1106,14 +1197,27 @@ class MainWindow(QMainWindow):
         self.desktop_page = self._build_desktop_page(); self.workspace_stack.addWidget(self.desktop_page)
         body.addWidget(workspace, 1)
 
-        focus = self._panel(); self.focus_panel = focus; focus.setFixedWidth(294); fv = QVBoxLayout(focus)
-        fv.setContentsMargins(16, 18, 16, 16); fv.setSpacing(10)
-        focus_title = QLabel("AMBIENT CORE"); focus_title.setObjectName("section"); fv.addWidget(focus_title)
+        focus = self._panel(); self.focus_panel = focus; focus.setObjectName("presencePanel")
+        focus.setGraphicsEffect(None); focus.setFixedWidth(276); fv = QVBoxLayout(focus)
+        fv.setContentsMargins(16, 16, 16, 16); fv.setSpacing(9)
+        presence_header = QHBoxLayout()
+        focus_title = QLabel("PRESENCE"); focus_title.setObjectName("presenceTitle")
+        self.visual_selector = QComboBox(); self.visual_selector.setObjectName("presenceSelector")
+        for label, value in PRESENCE_MODES:
+            self.visual_selector.addItem(label, value)
+        current_visual = load_config()["interface"].get("visual_mode", "orb")
+        self.visual_selector.setCurrentIndex(max(0, self.visual_selector.findData(current_visual)))
+        presence_header.addWidget(focus_title); presence_header.addStretch(); presence_header.addWidget(self.visual_selector)
+        fv.addLayout(presence_header)
         self.reactor = Reactor()
-        self.reactor.set_visual_mode(load_config()["interface"].get("visual_mode", "hybrid"))
+        self.reactor.set_visual_mode(current_visual)
         fv.addWidget(self.reactor, 0, Qt.AlignmentFlag.AlignCenter)
-        self.core_label = QLabel("LISTENING LAYER ONLINE"); self.core_label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.core_label.setObjectName("corelabel")
+        self.core_label = QLabel(PRESENCE_STATUS.get(current_visual, PRESENCE_STATUS["orb"]))
+        self.core_label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.core_label.setObjectName("corelabel")
         fv.addWidget(self.core_label)
+        capabilities = QLabel("CHAT  ·  VOICE  ·  MEMORY\nRESEARCH  ·  DESKTOP")
+        capabilities.setObjectName("capabilityStrip"); capabilities.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        fv.addWidget(capabilities)
         self.waveform = AudioWaveform(); fv.addWidget(self.waveform)
         voice_hint = QLabel("Speak naturally  /  silence sends")
         voice_hint.setObjectName("hint"); voice_hint.setWordWrap(True); voice_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1122,6 +1226,8 @@ class MainWindow(QMainWindow):
         tasks = QPushButton("DESKTOP CONTROL"); tasks.clicked.connect(self.open_task_studio); fv.addWidget(tasks)
         stop = QPushButton("EMERGENCY STOP"); stop.setObjectName("danger"); stop.clicked.connect(self.stop_task); fv.addWidget(stop)
         body.addWidget(focus)
+        self.visual_selector.currentIndexChanged.connect(
+            lambda: self.set_presence_mode(str(self.visual_selector.currentData())))
         self.memory_list = QListWidget(); self.memory_list.hide()
         self.set_chat_mode("auto")
 
@@ -1225,13 +1331,26 @@ class MainWindow(QMainWindow):
         self.interrupt_shortcut.activated.connect(self.interrupt_voice)
 
     def toggle_visual_mode(self):
-        modes = ("hybrid", "face", "core")
+        modes = tuple(value for _label, value in PRESENCE_MODES)
         current = self.reactor.visual_mode
-        mode = modes[(modes.index(current) + 1) % len(modes)] if current in modes else "hybrid"
+        mode = modes[(modes.index(current) + 1) % len(modes)] if current in modes else "orb"
+        self.set_presence_mode(mode)
+
+    def set_presence_mode(self, mode: str, persist: bool = True):
+        valid_modes = {value for _label, value in PRESENCE_MODES}
+        mode = mode if mode in valid_modes else "orb"
         self.reactor.set_visual_mode(mode)
-        cfg = load_config(); cfg["interface"]["visual_mode"] = mode; save_config(cfg)
-        if hasattr(self, "visual_button"):
-            self.visual_button.setText({"hybrid": "CORE  ◈  HUD FACE", "face": "HUD FACE", "core": "REACTOR CORE"}[mode])
+        self.core_label.setText(PRESENCE_STATUS[mode])
+        selector_index = self.visual_selector.findData(mode)
+        if selector_index >= 0 and selector_index != self.visual_selector.currentIndex():
+            self.visual_selector.blockSignals(True)
+            self.visual_selector.setCurrentIndex(selector_index)
+            self.visual_selector.blockSignals(False)
+        if persist:
+            cfg = load_config()
+            cfg["interface"]["visual_mode"] = mode
+            cfg["interface"]["presence_profile_version"] = 1
+            save_config(cfg)
 
     def _panel(self):
         frame = QFrame(); frame.setObjectName("panel")
@@ -1666,9 +1785,11 @@ class MainWindow(QMainWindow):
     def open_backup(self): BackupDialog(self).exec()
 
     def _settings_saved(self):
-        voice_cfg = load_config()["voice"]
+        cfg = load_config()
+        voice_cfg = cfg["voice"]
         self.voice_session = VoiceSession(
             voice_cfg["session_timeout"], voice_cfg["wake_phrase"], voice_cfg.get("wake_phrases"))
+        self.set_presence_mode(cfg["interface"].get("visual_mode", "orb"), persist=False)
         self.append("SYSTEM", "Configuration secured and active.")
         self._sync_always_listener()
 
@@ -1779,6 +1900,10 @@ class MainWindow(QMainWindow):
         QWidget {{ background:transparent; color:#EDF1F4; font-family:'Segoe UI'; font-size:13px; }}
         QWidget#hudRoot {{ background:{INK}; }}
         #panel {{ background:rgba(12,12,11,232); border:1px solid rgba(255,255,255,30); border-radius:9px; }}
+        #presencePanel {{ background:rgba(8,9,10,242); border:1px solid rgba(231,235,239,32); border-radius:12px; }}
+        #presenceTitle {{ color:#8F969D; font-family:Consolas; font-size:9px; font-weight:700; letter-spacing:3px; }}
+        QComboBox#presenceSelector {{ min-width:134px; padding:7px 9px; background:rgba(255,255,255,7); border:1px solid rgba(255,255,255,27); color:#E7EAED; font-family:Consolas; font-size:9px; font-weight:650; letter-spacing:1px; }}
+        #capabilityStrip {{ color:#777E85; background:rgba(255,255,255,5); border:1px solid rgba(255,255,255,18); border-radius:7px; padding:9px 4px; font-family:Consolas; font-size:8px; font-weight:650; letter-spacing:1px; }}
         #rail {{ background:rgba(9,9,8,242); border:1px solid rgba(255,255,255,22); border-radius:9px; }}
         #brand {{ color:#F5F3EE; font-size:25px; font-weight:650; letter-spacing:5px; }}
         #creator {{ color:#777570; font-size:9px; font-family:Consolas; letter-spacing:1px; }}
@@ -1787,7 +1912,7 @@ class MainWindow(QMainWindow):
         #engine {{ color:#A5A29B; font-family:Consolas; font-size:10px; font-weight:650; padding:0 8px; letter-spacing:1px; }}
         #section {{ color:#E8E5DE; font-family:Consolas; font-size:10px; font-weight:650; letter-spacing:3px; padding:3px 2px 8px 2px; }}
         #data {{ color:#777570; font-family:Consolas; font-size:9px; letter-spacing:1px; }}
-        #corelabel {{ color:#E7EBEF; font-family:Consolas; font-size:10px; font-weight:700; letter-spacing:3px; }}
+        #corelabel {{ color:#E7EBEF; font-family:Consolas; font-size:9px; font-weight:700; letter-spacing:2px; }}
         #hint {{ color:#777570; font-family:Consolas; font-size:10px; line-height:1.4; padding:8px; }}
         #keyStatus {{ color:#D9DEE3; font-weight:650; }}
         #dataCard {{ background:rgba(20,23,26,205); border:1px solid #343A40; border-radius:7px; }}

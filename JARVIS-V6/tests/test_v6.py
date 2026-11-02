@@ -62,6 +62,14 @@ class V6Tests(unittest.TestCase):
             with self.assertRaises(ValueError): workspace.save('Projects','password','secret')
     def test_profile_is_v6(self):
         self.assertEqual(config.APP_DIR.name,'JARVIS-V6')
+        self.assertEqual(config.DEFAULTS['interface']['visual_mode'], 'orb')
+        self.assertEqual(config.DEFAULTS['interface']['presence_profile_version'], 1)
+
+    def test_v6_presence_offers_five_distinct_saved_designs(self):
+        from ui.main_window import PRESENCE_MODES, PRESENCE_STATUS
+        modes = [value for _label, value in PRESENCE_MODES]
+        self.assertEqual(modes, ['orb', 'core', 'face', 'hybrid', 'minimal'])
+        self.assertEqual(set(modes), set(PRESENCE_STATUS))
 
     def test_conversation_contexts_are_isolated(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(config, 'APP_DIR', Path(tmp)):
