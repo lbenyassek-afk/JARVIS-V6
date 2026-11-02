@@ -1,0 +1,22 @@
+# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(6, 0, 0, 0), prodvers=(6, 0, 0, 0),
+    mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable('040904B0', [
+        StringStruct('CompanyName', 'Reda Benyassek'),
+        StringStruct('FileDescription', 'JARVIS V6 Personal Intelligence'),
+        StringStruct('FileVersion', '6.0.0'),
+        StringStruct('InternalName', 'JARVIS V6'),
+        StringStruct('LegalCopyright', 'Copyright © 2026 Reda Benyassek. All rights reserved.'),
+        StringStruct('OriginalFilename', 'JARVIS V6.exe'),
+        StringStruct('ProductName', 'JARVIS V6'),
+        StringStruct('ProductVersion', '6.0.0'),
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
