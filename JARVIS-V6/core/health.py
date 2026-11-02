@@ -4,6 +4,7 @@ import importlib.util
 
 from .crypto import open_text, seal
 from .secrets import get_secret
+from .capabilities import snapshot as capability_snapshot
 
 
 def run(registry=None) -> list[dict]:
@@ -25,4 +26,9 @@ def run(registry=None) -> list[dict]:
         add("Microphone", False, exc)
     errors = list(getattr(registry, "errors", [])) if registry is not None else []
     add("Desktop skills", not errors, "Allowlisted skills loaded" if not errors else "; ".join(errors))
+    for capability in capability_snapshot(registry):
+        state = capability["state"]
+        add("Capability: " + capability["id"].replace("_", " ").title(),
+            state in ("ready", "configured", "enabled", "foundation"),
+            f"{state}: {capability['detail']}")
     return rows

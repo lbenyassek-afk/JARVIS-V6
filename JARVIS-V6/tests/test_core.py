@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
-from core import backup, config, instructions, local_core, manager_prompt, memory, metrics, permissions, planner, plugin_runtime, plugins, prompt, recovery, weather, providers, workspace
+from core import backup, capabilities, config, instructions, local_core, manager_prompt, memory, metrics, permissions, planner, plugin_runtime, plugins, prompt, recovery, weather, providers, workspace
 from core.intent import is_weather_query, quick_reply, requested_location
 from core.llm import LLMClient, LLMError, normalize_gemini_key, route_mode, validate_gemini_key
 from core.skills import Action, Registry
@@ -252,6 +252,13 @@ class CoreTests(unittest.TestCase):
             '"adapter":"../../evil.py","permissions":["arbitrary_shell"]}', encoding="utf-8")
         with self.assertRaises(ValueError):
             plugin_runtime.load_manifest(manifest, {"calendar_adapter"})
+
+    def test_v6_capabilities_label_future_features_honestly(self):
+        registry = Registry(); registry.register(Action("test_action", "Test", "Test", lambda value: value))
+        rows = {row["id"]: row for row in capabilities.snapshot(registry)}
+        self.assertEqual(rows["iphone_interface"]["state"], "future")
+        self.assertEqual(rows["remote_relay"]["state"], "future")
+        self.assertNotEqual(rows["desktop_control"]["state"], "future")
 
     def test_password_backup_is_encrypted_and_inspectable(self):
         config.CONFIG_PATH.write_text('{"assistant":{"name":"JARVIS"}}', encoding="utf-8")
