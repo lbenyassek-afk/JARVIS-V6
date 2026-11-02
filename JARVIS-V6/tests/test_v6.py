@@ -10,6 +10,12 @@ from core.companion import CompanionServer
 from core.llm import LLMClient
 
 class V6Tests(unittest.TestCase):
+    def test_v6_icon_contains_standard_windows_sizes(self):
+        icon = Path(__file__).resolve().parent.parent / "jarvis.ico"
+        raw = icon.read_bytes()
+        self.assertEqual(raw[:4], b"\x00\x00\x01\x00")
+        self.assertGreaterEqual(int.from_bytes(raw[4:6], "little"), 8)
+
     def test_companion_requires_auth_and_only_queues_commands(self):
         server = CompanionServer("127.0.0.1", 0, "test-companion-token")
         host, port = server.start()

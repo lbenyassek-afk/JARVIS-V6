@@ -2,6 +2,7 @@
 
 ## Implemented in Alpha 1
 
+- Original V6 application icon built around a recognizable J-reactor silhouette.
 - Independent V6 application, storage, credential, installer and update identities.
 - Inherited V5.3 chat, Gemini diagnostics, voice, memory encryption, recovery,
   backups, workspaces, permissions and bounded desktop actions.
