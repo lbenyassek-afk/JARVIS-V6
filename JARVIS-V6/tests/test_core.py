@@ -16,7 +16,7 @@ from core.skills import Action, Registry
 from core.tasks import Step, TaskExecutor
 from core.desktop_intent import parse as parse_desktop_command
 from core.windows_automation import split_target_text, validate_control_name, validate_target_text
-from core.voice import _spoken_text
+from core.voice import VOICE_STYLES, _spoken_text
 from core.speech import transcribe_fast_free, transcribe_offline
 from core.language import detect_language, speech_locale, voice_for_text
 from core.retrieval import relevance
@@ -139,12 +139,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(voice["end_silence_ms"], 500)
         self.assertEqual(voice["input_engine"], "fast_free")
         self.assertEqual(voice["activation_mode"], "natural")
+        self.assertEqual(voice["voice_style"], "cinematic")
         self.assertTrue(voice["adaptive_silence"])
         self.assertEqual(voice["max_utterance_seconds"], 20)
         selected = config.load_config()
         selected["voice"]["british_voice"] = "en-GB-RyanNeural"
         config.save_config(selected)
         self.assertEqual(config.load_config()["voice"]["british_voice"], "en-GB-RyanNeural")
+
+    def test_voice_styles_offer_fast_deep_natural_and_custom_profiles(self):
+        self.assertEqual(set(VOICE_STYLES), {"cinematic", "fast", "deep", "natural", "custom"})
+        self.assertGreater(VOICE_STYLES["fast"]["rate"], VOICE_STYLES["cinematic"]["rate"])
+        self.assertLess(VOICE_STYLES["deep"]["pitch"], VOICE_STYLES["cinematic"]["pitch"])
 
     def test_v51_voice_settings_migrate_to_natural_fast_profile(self):
         config.CONFIG_PATH.write_text(

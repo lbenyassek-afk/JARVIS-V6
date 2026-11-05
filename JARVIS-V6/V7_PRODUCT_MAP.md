@@ -4,6 +4,19 @@ This is the evidence-based route from the current V6 application to a product
 that can compete with established desktop assistants. A feature is only marked
 ready when it has an implementation and a check that can fail.
 
+## Five product pillars
+
+1. **Extensible foundation:** every new feature must enter through typed,
+   permission-aware contracts and remain measurable, replaceable and testable.
+2. **Gemini registration:** setup is the first AI experience. It must explain,
+   validate, test, store and recover credentials without exposing them.
+3. **Desktop control:** natural requests become reviewed bounded missions with
+   complete preflight, approvals, checkpoints and observable results.
+4. **Fast intelligence:** local replies handle instant work while Gemini routes
+   between fast chat, grounded research and reflection according to the request.
+5. **Responsive customizable voice:** users choose voice, style, speed, pitch,
+   volume, microphone, language and end-of-speech timing. Latency is measured.
+
 ## Product architecture
 
 ```mermaid

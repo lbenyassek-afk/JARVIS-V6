@@ -26,6 +26,18 @@ BRITISH_VOICES = {
     "Duarte — voz portuguesa": "pt-PT-DuarteNeural",
 }
 
+VOICE_STYLES = {
+    "cinematic": {"label": "Cinematic — balanced and authoritative",
+                  "voice": "en-GB-ThomasNeural", "rate": -1, "pitch": -4},
+    "fast": {"label": "Fast operator — quickest delivery",
+             "voice": "en-GB-ThomasNeural", "rate": 9, "pitch": -2},
+    "deep": {"label": "Deep British — slower and heavier",
+             "voice": "en-GB-RyanNeural", "rate": -4, "pitch": -9},
+    "natural": {"label": "Natural British — conversational",
+                "voice": "en-GB-ThomasNeural", "rate": 2, "pitch": -2},
+    "custom": {"label": "Custom — use the controls below"},
+}
+
 
 def _spoken_text(text: str) -> str:
     clean = re.sub(r"\n+Sources:\s*\n(?:-.*(?:\n|$))+", " Sources are shown on screen. ",

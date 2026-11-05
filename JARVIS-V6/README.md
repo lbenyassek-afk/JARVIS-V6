@@ -28,6 +28,8 @@ memory, credentials, executable, installer, update channel and prerelease track.
   changes recolour the HUD, panels, controls, waveform and presence visual together.
 - Voice customization for multilingual neural voices, preview, speed, pitch,
   volume, capture engine, activation behaviour and microphone selection.
+- Four one-click voice styles—Cinematic, Fast Operator, Deep British and Natural
+  British—plus fully custom voice, speed, pitch and volume controls.
 - Multilingual intelligence for English, French, Arabic, Spanish, German, Italian
   and Portuguese, with automatic reply-language detection, language-specific free
   speech recognition and matching Edge neural voices.

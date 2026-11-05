@@ -18,6 +18,17 @@
   `python benchmark.py`.
 - Added the visual V7 product map and measurable private-beta release gates.
 
+## Five-pillar product focus
+
+- Added a live home-panel status for the extensible foundation, Gemini
+  registration, Desktop Control, fast intelligence and customizable voice.
+- Kept Gemini registration as the first-run AI gate and added a permanent
+  connection shortcut beside the main presence controls.
+- Added Cinematic, Fast Operator, Deep British and Natural British voice styles,
+  plus a Custom mode that preserves manual voice, speed and pitch choices.
+- Added automated coverage for the pillar order, registration status and voice
+  profile behavior.
+
 ## Implemented in Alpha 1
 
 - Original V6 application icon built around a bold titanium J-reactor silhouette,

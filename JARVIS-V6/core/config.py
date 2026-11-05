@@ -60,6 +60,7 @@ DEFAULTS = {
         "speech_rate": -1,
         "speech_pitch": -4,
         "speech_volume": 90,
+        "voice_style": "cinematic",
         "british_voice": "en-GB-ThomasNeural",
         "profile_version": 3,
         "recognition_profile_version": 4,

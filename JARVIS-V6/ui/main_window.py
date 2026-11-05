@@ -43,7 +43,8 @@ from core.plugins import CATALOG as PLUGIN_CATALOG, enabled as plugin_enabled, s
 from core.secrets import get_secret, set_secret
 from core.skills import Registry
 from core.tasks import Step, TaskExecutor
-from core.voice import BRITISH_VOICES, is_cached_audio, synthesize
+from core.voice import BRITISH_VOICES, VOICE_STYLES, is_cached_audio, synthesize
+from core.pillars import snapshot as pillar_snapshot
 from core.weather import prefetch as prefetch_weather, report as weather_report
 from core.audit import recent as recent_desktop_actions
 from core.screen_context import snapshot as screen_snapshot
@@ -935,6 +936,12 @@ class SettingsDialog(QDialog):
         for label, value in BRITISH_VOICES.items(): self.voice.addItem(label, value)
         current_voice = cfg["voice"].get("british_voice", "en-GB-ThomasNeural")
         index = self.voice.findData(current_voice); self.voice.setCurrentIndex(max(0, index))
+        self.voice_style = QComboBox()
+        for value, profile in VOICE_STYLES.items():
+            self.voice_style.addItem(profile["label"], value)
+        self.voice_style.setCurrentIndex(max(
+            0, self.voice_style.findData(cfg["voice"].get("voice_style", "cinematic"))))
+        self._voice_style_updating = False
         self.voice_preview = QPushButton("PREVIEW CINEMATIC VOICE")
         self.voice_preview.clicked.connect(self._preview_voice)
         self.always_listening = QCheckBox(); self.always_listening.setChecked(cfg["voice"].get("always_listening", True))
@@ -951,6 +958,10 @@ class SettingsDialog(QDialog):
         self.speech_pitch.setValue(int(cfg["voice"].get("speech_pitch", 0)))
         self.speech_volume = QSpinBox(); self.speech_volume.setRange(40, 100); self.speech_volume.setSuffix(" %")
         self.speech_volume.setValue(int(cfg["voice"].get("speech_volume", 90)))
+        self.voice_style.currentIndexChanged.connect(self._apply_voice_style)
+        self.voice.currentIndexChanged.connect(self._mark_voice_custom)
+        self.speech_rate.valueChanged.connect(self._mark_voice_custom)
+        self.speech_pitch.valueChanged.connect(self._mark_voice_custom)
         self.microphone = QComboBox(); self.microphone.addItem("System default microphone", "")
         try:
             import sounddevice as sd
@@ -1038,6 +1049,7 @@ class SettingsDialog(QDialog):
             ("Speech recognition", self.input_engine),
             ("Listening behaviour", self.activation_mode),
             ("Wake phrase", self.wake_phrase),
+            ("Voice style", self.voice_style),
             ("Neural voice", self.voice),
             ("Voice preview", self.voice_preview),
             ("Always-listening microphone", self.always_listening),
@@ -1116,6 +1128,7 @@ class SettingsDialog(QDialog):
         cfg["voice"]["wake_phrase"] = wake
         cfg["voice"]["wake_phrases"] = list(dict.fromkeys([wake, "jarvis"]))
         cfg["voice"]["british_voice"] = self.voice.currentData()
+        cfg["voice"]["voice_style"] = self.voice_style.currentData()
         cfg["voice"]["always_listening"] = self.always_listening.isChecked()
         cfg["voice"]["input_device"] = self.microphone.currentData() or ""
         cfg["voice"]["english_only"] = self.english_only.isChecked()
@@ -1160,6 +1173,28 @@ class SettingsDialog(QDialog):
         save_config(cfg)
         QMessageBox.information(self, "Settings saved", "Your JARVIS settings are active.")
         self.saved.emit(); self.accept()
+
+    def _apply_voice_style(self):
+        style = str(self.voice_style.currentData() or "custom")
+        profile = VOICE_STYLES.get(style, VOICE_STYLES["custom"])
+        if style == "custom":
+            return
+        self._voice_style_updating = True
+        voice_index = self.voice.findData(profile["voice"])
+        if voice_index >= 0:
+            self.voice.setCurrentIndex(voice_index)
+        self.speech_rate.setValue(int(profile["rate"]))
+        self.speech_pitch.setValue(int(profile["pitch"]))
+        self._voice_style_updating = False
+
+    def _mark_voice_custom(self):
+        if self._voice_style_updating:
+            return
+        custom = self.voice_style.findData("custom")
+        if custom >= 0 and self.voice_style.currentIndex() != custom:
+            self.voice_style.blockSignals(True)
+            self.voice_style.setCurrentIndex(custom)
+            self.voice_style.blockSignals(False)
 
     def _test_microphone(self):
         self.mic_test.setEnabled(False); self.mic_test.setText("LISTENING — SPEAK NOW…")
@@ -1666,18 +1701,31 @@ class MainWindow(QMainWindow):
         capabilities = QLabel("CHAT  ·  VOICE  ·  MEMORY\nRESEARCH  ·  DESKTOP")
         capabilities.setObjectName("capabilityStrip"); capabilities.setAlignment(Qt.AlignmentFlag.AlignCenter)
         fv.addWidget(capabilities)
+        self.pillar_status = QLabel(); self.pillar_status.setObjectName("dataCard")
+        self.pillar_status.setWordWrap(True); self.pillar_status.setMargin(10)
+        fv.addWidget(self.pillar_status); self._refresh_pillars()
         self.waveform = AudioWaveform(); fv.addWidget(self.waveform)
         voice_hint = QLabel("Speak naturally  /  silence sends")
         voice_hint.setObjectName("hint"); voice_hint.setWordWrap(True); voice_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         fv.addWidget(voice_hint)
         fv.addStretch()
         tasks = QPushButton("DESKTOP CONTROL"); tasks.clicked.connect(self.open_task_studio); fv.addWidget(tasks)
+        gemini = QPushButton("GEMINI CONNECTION"); gemini.clicked.connect(self.open_api_key_setup); fv.addWidget(gemini)
         stop = QPushButton("EMERGENCY STOP"); stop.setObjectName("danger"); stop.clicked.connect(self.stop_task); fv.addWidget(stop)
         body.addWidget(focus)
         self.visual_selector.currentIndexChanged.connect(
             lambda: self.set_presence_mode(str(self.visual_selector.currentData())))
         self.memory_list = QListWidget(); self.memory_list.hide()
         self.set_chat_mode("auto")
+
+    def _refresh_pillars(self):
+        if not hasattr(self, "pillar_status"):
+            return
+        lines = []
+        for index, item in enumerate(pillar_snapshot(self.registry), 1):
+            mark = "●" if item["ready"] else "○"
+            lines.append(f"{index}  {mark}  {item['label'].upper()}")
+        self.pillar_status.setText("\n".join(lines))
 
     def navigate(self, name):
         if name == 'Home': self.workspace_stack.setCurrentIndex(0); self.set_chat_mode('auto')
@@ -1874,6 +1922,7 @@ class MainWindow(QMainWindow):
                        self._gemini_ready, self._gemini_check_failed)
 
     def _gemini_ready(self, _message):
+        self._refresh_pillars()
         self.append("JARVIS", "Ready. Type a message or speak naturally.")
         self.status.setText("● DESKTOP CONTROL READY" if self.desktop_conversation_mode else "● READY")
         self._sync_always_listener()
@@ -1903,6 +1952,7 @@ class MainWindow(QMainWindow):
             self.append("SYSTEM", f"JARVIS {result.get('latest')} is available in the configured update channel.")
 
     def _gemini_check_failed(self, error):
+        self._refresh_pillars()
         self.append("SYSTEM", error)
         self.status.setText("● GEMINI NEEDS ATTENTION")
         if QMessageBox.question(self, "Gemini is not connected",
@@ -2305,6 +2355,7 @@ class MainWindow(QMainWindow):
             voice_cfg["session_timeout"], voice_cfg["wake_phrase"], voice_cfg.get("wake_phrases"))
         self.set_presence_mode(cfg["interface"].get("visual_mode", "orb"), persist=False)
         self.apply_appearance(cfg["interface"])
+        self._refresh_pillars()
         self.append("SYSTEM", "Configuration secured and active.")
         self._sync_always_listener()
 
@@ -2316,7 +2367,9 @@ class MainWindow(QMainWindow):
         self.backdrop.set_theme(palette)
 
     def open_api_key_setup(self) -> bool:
-        return ApiKeyDialog(self).exec() == QDialog.DialogCode.Accepted
+        connected = ApiKeyDialog(self).exec() == QDialog.DialogCode.Accepted
+        self._refresh_pillars()
+        return connected
 
     def open_about(self):
         QMessageBox.about(

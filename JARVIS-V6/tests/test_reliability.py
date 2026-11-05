@@ -12,6 +12,7 @@ from core.plugin_runtime import load_manifest, verify_payload_integrity
 from core.skills import Action, Registry
 from core.tasks import Step, TaskExecutor
 from core.verification import VerificationResult
+from core.pillars import snapshot as pillar_snapshot
 
 
 class ReliabilityTests(unittest.TestCase):
@@ -112,6 +113,15 @@ class ReliabilityTests(unittest.TestCase):
         report = run_suite(False)
         self.assertEqual(report["failed"], 0)
         self.assertGreaterEqual(report["passed"], 6)
+
+    def test_product_pillars_have_stable_priority_and_honest_registration(self):
+        registry = Registry(); registry.register(Action("safe", "Safe", "Test", lambda value: value))
+        with patch("core.pillars.get_secret", return_value=""):
+            rows = pillar_snapshot(registry)
+        self.assertEqual([item["id"] for item in rows],
+                         ["foundation", "registration", "desktop", "speed", "voice"])
+        self.assertFalse(rows[1]["ready"])
+        self.assertTrue(rows[2]["ready"])
 
 
 if __name__ == "__main__":
