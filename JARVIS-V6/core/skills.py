@@ -18,6 +18,7 @@ class Action:
     handler: Callable[[str], str]
     values: tuple[str, ...] = ()
     sensitive: bool = False
+    validator: Callable[[str], str] | None = None
 
 
 class Registry:

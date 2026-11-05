@@ -30,6 +30,9 @@ memory, credentials, executable, installer, update channel and prerelease track.
   engine, activation behaviour and microphone selection.
 - Desktop Mission Control for goal-based allowlisted plans, mouse-position capture,
   step reordering, live progress, emergency cancellation and encrypted action history.
+- Windows app-aware control using accessibility names for windows, buttons, menu items
+  and text fields, with an active-app scanner and coordinate fallback.
+- Encrypted reusable Desktop Routines that remain locally validated when loaded again.
 - Fast typed or spoken desktop commands for approved apps, window switching, desktop,
   volume, media, scrolling and screenshots, routed through the same permission system.
 - `/desktop control` starts a session-only natural command mode. Multi-step spoken or
@@ -39,9 +42,10 @@ memory, credentials, executable, installer, update channel and prerelease track.
   explicit test/save states and Windows Credential Manager storage.
 - A full Capabilities screen reports ready, setup-required, disabled and future
   components without presenting unfinished integrations as working features.
-- Thirteen bounded desktop actions including approved applications, Unicode text,
-  clipboard, fixed shortcuts, navigation keys, pointer actions, scrolling, media,
-  screenshots and waits. Sensitive actions still require explicit approval.
+- Eighteen bounded desktop actions including approved applications, Unicode text,
+  named Windows controls, window focus and layout, clipboard, fixed shortcuts,
+  pointer actions, scrolling, media, screenshots and waits. Sensitive actions
+  still require explicit approval.
 - Independent `%APPDATA%\JARVIS-V6` profile and `JARVIS-V6` Credential Manager service.
 - Separate `JARVIS V6.exe`, installer identity and prerelease workflow.
 - Local offline core for time, date, status, local memory search and capability help.

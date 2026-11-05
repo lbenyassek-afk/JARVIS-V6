@@ -6,12 +6,13 @@ from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
-from core import backup, capabilities, config, instructions, local_core, manager_prompt, memory, metrics, permissions, planner, plugin_runtime, plugins, prompt, recovery, weather, providers, workspace
+from core import backup, capabilities, config, instructions, local_core, manager_prompt, memory, metrics, permissions, planner, plugin_runtime, plugins, prompt, recovery, routines, weather, providers, workspace
 from core.intent import is_weather_query, quick_reply, requested_location
 from core.llm import LLMClient, LLMError, normalize_gemini_key, route_mode, valid_gemini_key_format, validate_gemini_key
 from core.skills import Action, Registry
 from core.tasks import Step, TaskExecutor
 from core.desktop_intent import parse as parse_desktop_command
+from core.windows_automation import split_target_text, validate_control_name, validate_target_text
 from core.voice import _spoken_text
 from core.speech import transcribe_fast_free, transcribe_offline
 
@@ -61,8 +62,33 @@ class CoreTests(unittest.TestCase):
         registry.discover(Path(__file__).resolve().parent.parent / "skills")
         self.assertEqual(registry.errors, [])
         self.assertTrue({"open_app", "click_point", "move_pointer", "double_click", "right_click",
-                         "scroll", "media_key", "screenshot"}
+                         "scroll", "media_key", "screenshot", "inspect_active_app", "focus_window",
+                         "invoke_control", "set_control_text", "window_layout"}
                         <= set(registry.actions))
+
+    def test_app_aware_values_are_validated_before_execution(self):
+        self.assertEqual(split_target_text("Search || Reda's project"), ("Search", "Reda's project"))
+        self.assertEqual(validate_target_text("  Search box  ||  new query  "), "Search box || new query")
+        self.assertEqual(validate_control_name("  Save   As  "), "Save As")
+        with self.assertRaises(ValueError):
+            split_target_text("missing separator")
+        registry = Registry()
+        registry.register(Action("set_control_text", "Set field", "Set", lambda value: value,
+                                 sensitive=True, validator=validate_target_text))
+        with self.assertRaisesRegex(ValueError, "Invalid value"):
+            planner.build("Enter text", [Step("set_control_text", "Search only")], registry)
+
+    def test_desktop_routines_are_encrypted_reusable_and_secret_safe(self):
+        plan = [Step("open_app", "Notepad"), Step("type_text", "Project update")]
+        routines.save("Morning update", "Prepare an update", plan)
+        stored = (config.APP_DIR / "desktop_routines.json").read_text(encoding="utf-8")
+        self.assertTrue(stored.startswith("J5E1:"))
+        self.assertNotIn("Project update", stored)
+        loaded = routines.load()[0]
+        self.assertEqual(routines.steps(loaded), plan)
+        self.assertTrue(routines.delete("Morning update"))
+        with self.assertRaises(ValueError):
+            routines.save("Secret", "Use api_key=sk-abcdefghijklmnopqrstuvwxyz", plan)
 
     def test_natural_desktop_commands_map_only_to_allowlisted_steps(self):
         goal, steps = parse_desktop_command("Jarvis open the calculator")

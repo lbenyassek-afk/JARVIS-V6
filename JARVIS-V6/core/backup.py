@@ -27,7 +27,8 @@ def _derive(password: str, salt: bytes) -> bytes:
 def create(destination: Path, password: str) -> Path:
     destination = Path(destination)
     files = ("config.json", "memory.json", "conversation.sqlite3", "workspace.sqlite3",
-             "desktop_audit.sqlite3", "custom_instructions.txt", "manager_prompt.txt")
+             "desktop_audit.sqlite3", "desktop_routines.json",
+             "custom_instructions.txt", "manager_prompt.txt")
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", json.dumps({"format": 1, "application": "JARVIS V6"}))

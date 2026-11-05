@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 
 from .config import load_config
 from .secrets import get_secret
@@ -16,6 +17,7 @@ def snapshot(registry=None) -> list[dict]:
     companion_enabled = bool(cfg.get("companion", {}).get("enabled", False))
     gemini_ready = bool(get_secret("gemini_api_key"))
     desktop_ready = bool(desktop_actions and not desktop_errors)
+    app_aware_ready = desktop_ready and sys.platform == "win32" and importlib.util.find_spec("pywinauto") is not None
     return [
         {"id": "local_core", "state": "ready", "detail": "Bounded offline commands and local memory search"},
         {"id": "gemini", "state": "configured" if gemini_ready else "setup_required",
@@ -34,6 +36,9 @@ def snapshot(registry=None) -> list[dict]:
          "detail": f"{desktop_actions} allowlisted action(s)" if not desktop_errors else "; ".join(desktop_errors)},
         {"id": "natural_desktop", "state": "ready" if desktop_ready and gemini_ready else "setup_required",
          "detail": "/desktop control with structured planning" if gemini_ready else "Connect Gemini for multi-step planning"},
+        {"id": "app_aware_desktop", "state": "ready" if app_aware_ready else "unavailable",
+         "detail": "Named Windows controls and fields" if app_aware_ready else "Requires the Windows application build"},
+        {"id": "desktop_routines", "state": "ready", "detail": "Encrypted reusable reviewed missions"},
         {"id": "appearance", "state": "ready", "detail": "Six themes, custom accent and five presence designs"},
         {"id": "workspaces", "state": "ready", "detail": "Personal, School and Business contexts"},
         {"id": "weather", "state": "ready" if cfg.get("plugins", {}).get("enabled", {}).get("weather", True) else "disabled",

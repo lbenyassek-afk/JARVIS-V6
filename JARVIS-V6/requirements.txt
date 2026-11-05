@@ -6,6 +6,7 @@ numpy>=1.26,<3
 pyautogui>=0.9.54,<1
 pyperclip>=1.9,<2
 pynput>=1.7,<2
+pywinauto>=0.6.9,<1; platform_system=="Windows"
 pyinstaller>=6.11,<7
 edge-tts>=7,<8
 SpeechRecognition>=3.14,<4

@@ -47,6 +47,11 @@ def build(goal: str, steps, registry, maximum: int = 20) -> ExecutionPlan:
         value = str(step.value)[:2_000]
         if action.values and value not in action.values:
             raise ValueError(f"Value is not allowlisted for {action.label}: {value}")
+        if action.validator:
+            try:
+                value = action.validator(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid value for {action.label}: {exc}") from exc
         decision = decide(action, value)
         planned.append(PlannedStep(action.name, value, action.label,
                                    decision.approval_required, decision.reason))

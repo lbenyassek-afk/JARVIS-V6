@@ -29,6 +29,7 @@ from core.local_core import respond as local_core_response
 from core.llm import LLMClient, normalize_gemini_key, route_mode, valid_gemini_key_format, validate_gemini_key
 from core.session import VoiceSession
 from core.workspace import save as save_record
+from core.windows_automation import active_controls, split_target_text
 from ui.workspace import WorkspaceDialog
 from core.instructions import load as load_instructions, save as save_instructions
 from core.memory import delete_all, delete_one, search, update as update_memory
@@ -44,6 +45,7 @@ from core.screen_context import snapshot as screen_snapshot
 from core.updates import check as check_for_updates
 from core.speech import transcribe_fast_free, transcribe_offline
 from core.planner import build as build_execution_plan
+from core.routines import delete as delete_routine, load as load_routines, save as save_routine, steps as routine_steps
 from core import recovery
 from ui.productivity import (
     ActivityDialog, BackupDialog, CommandPalette, DiagnosticsDialog,
@@ -819,6 +821,7 @@ class CapabilitiesDialog(QDialog):
             "deep_research": "Deep Research", "memory": "Encrypted Memory", "voice_input": "Voice Capture",
             "cinematic_voice": "Neural British Voice", "desktop_control": "Desktop Control",
             "natural_desktop": "Natural Desktop Mode", "appearance": "Appearance Studio",
+            "app_aware_desktop": "App-Aware Desktop", "desktop_routines": "Desktop Routines",
             "workspaces": "Life Workspaces", "weather": "Live Weather",
             "recovery_backup": "Recovery & Backup", "companion_transport": "Companion Transport",
             "iphone_interface": "iPhone Interface", "remote_relay": "Remote Relay",
@@ -1247,7 +1250,7 @@ class TaskStudio(QDialog):
     run_plan = pyqtSignal(str, list)
 
     def __init__(self, registry: Registry, parent=None):
-        super().__init__(parent); self.registry = registry
+        super().__init__(parent); self.registry = registry; self.scan_thread = None; self.scan_worker = None
         self.setWindowTitle("JARVIS // DESKTOP MISSION CONTROL"); self.resize(780, 620)
         layout = QVBoxLayout(self)
         header = QHBoxLayout(); title = QLabel("MISSION PLAN"); title.setObjectName("section")
@@ -1257,6 +1260,13 @@ class TaskStudio(QDialog):
         info.setWordWrap(True); layout.addWidget(info)
         self.goal = QLineEdit(); self.goal.setPlaceholderText("What should JARVIS accomplish?")
         layout.addWidget(self.goal)
+        routine_row = QHBoxLayout(); self.routine = QComboBox(); self.routine.setMinimumWidth(260)
+        load_routine_button = QPushButton("LOAD ROUTINE"); load_routine_button.clicked.connect(self._load_routine)
+        save_routine_button = QPushButton("SAVE ROUTINE"); save_routine_button.clicked.connect(self._save_routine)
+        delete_routine_button = QPushButton("DELETE"); delete_routine_button.clicked.connect(self._delete_routine)
+        routine_row.addWidget(self.routine, 1); routine_row.addWidget(load_routine_button)
+        routine_row.addWidget(save_routine_button); routine_row.addWidget(delete_routine_button)
+        layout.addLayout(routine_row); self._refresh_routines()
         form = QFormLayout(); self.action = QComboBox()
         for name, action in registry.actions.items(): self.action.addItem(action.label, name)
         self.value = QComboBox(); self.value.setEditable(True); self.action.currentIndexChanged.connect(self._values)
@@ -1265,8 +1275,9 @@ class TaskStudio(QDialog):
         form.addRow("Effect", self.action_help); layout.addLayout(form)
         builder = QHBoxLayout()
         self.capture = QPushButton("USE CURRENT CURSOR"); self.capture.clicked.connect(self._capture_cursor)
+        self.scan = QPushButton("SCAN ACTIVE APP"); self.scan.clicked.connect(self._scan_controls)
         add = QPushButton("ADD STEP"); add.setObjectName("primary"); add.clicked.connect(self._add)
-        builder.addWidget(self.capture); builder.addStretch(); builder.addWidget(add); layout.addLayout(builder)
+        builder.addWidget(self.capture); builder.addWidget(self.scan); builder.addStretch(); builder.addWidget(add); layout.addLayout(builder)
         self._values()
         self.steps = QListWidget(); layout.addWidget(self.steps, 1)
         row = QHBoxLayout(); up = QPushButton("↑"); up.setToolTip("Move selected step up"); up.clicked.connect(lambda: self._move(-1))
@@ -1288,6 +1299,50 @@ class TaskStudio(QDialog):
             decision = __import__('core.permissions', fromlist=['decide']).decide(action, self.value.currentText())
             self.action_help.setText(action.description + "  /  " + decision.reason)
             self.capture.setVisible(action.name in ("click_point", "move_pointer", "double_click", "right_click"))
+            self.scan.setVisible(action.name in ("inspect_active_app", "invoke_control", "set_control_text"))
+
+    def _refresh_routines(self):
+        self.routine.clear(); self.routine.addItem("SAVED ROUTINES", None)
+        for item in load_routines():
+            self.routine.addItem(str(item.get("name", "Routine")), item)
+
+    def _load_routine(self):
+        item = self.routine.currentData()
+        if not isinstance(item, dict):
+            QMessageBox.information(self, "Select a routine", "Choose a saved routine first."); return
+        self.goal.setText(str(item.get("goal", ""))); self.steps.clear()
+        skipped = []
+        for step in routine_steps(item):
+            if step.action not in self.registry.actions:
+                skipped.append(step.action); continue
+            self.steps.addItem("")
+            self.steps.item(self.steps.count() - 1).setData(Qt.ItemDataRole.UserRole, step)
+        self._renumber(); self._update_risk()
+        if skipped:
+            QMessageBox.warning(self, "Routine updated",
+                                "Unavailable actions were skipped: " + ", ".join(skipped))
+
+    def _save_routine(self):
+        plan = [self.steps.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.steps.count())]
+        if not plan:
+            QMessageBox.information(self, "Empty routine", "Add at least one step first."); return
+        name, accepted = QInputDialog.getText(self, "Save desktop routine", "Routine name")
+        if not accepted: return
+        try:
+            build_execution_plan(self.goal.text().strip() or name, plan, self.registry, 20)
+            save_routine(name, self.goal.text().strip() or name, plan)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Routine not saved", str(exc)); return
+        self._refresh_routines()
+        index = self.routine.findText(" ".join(name.split()))
+        self.routine.setCurrentIndex(max(0, index))
+
+    def _delete_routine(self):
+        item = self.routine.currentData()
+        if not isinstance(item, dict): return
+        name = str(item.get("name", "Routine"))
+        if QMessageBox.question(self, "Delete routine?", f"Delete '{name}'?") == QMessageBox.StandardButton.Yes:
+            delete_routine(name); self._refresh_routines()
 
     def _capture_cursor(self):
         try:
@@ -1297,10 +1352,46 @@ class TaskStudio(QDialog):
         except Exception as exc:
             QMessageBox.warning(self, "Cursor unavailable", str(exc))
 
+    def _scan_controls(self):
+        if self.scan_thread is not None:
+            return
+        self.scan.setEnabled(False); self.scan.setText("SCANNING…")
+        self.scan_thread = QThread(self); self.scan_worker = Task(active_controls, 80)
+        self.scan_worker.moveToThread(self.scan_thread)
+        self.scan_thread.started.connect(self.scan_worker.run)
+        self.scan_worker.done.connect(self._controls_ready); self.scan_worker.failed.connect(self._controls_failed)
+        self.scan_worker.done.connect(self.scan_thread.quit); self.scan_worker.failed.connect(self.scan_thread.quit)
+        self.scan_thread.finished.connect(self.scan_worker.deleteLater)
+        self.scan_thread.finished.connect(self.scan_thread.deleteLater)
+        self.scan_thread.finished.connect(self._scan_finished); self.scan_thread.start()
+
+    def _controls_ready(self, rows):
+        names = [f"{row['name']}  [{row['type']}]" for row in rows]
+        raw_names = [row["name"] for row in rows]
+        action_name = str(self.action.currentData())
+        self.value.clear(); self.value.setEditable(True)
+        if action_name == "set_control_text":
+            self.value.addItems([name + " || " for name in raw_names])
+        else:
+            self.value.addItems(raw_names)
+        self.action_help.setText(
+            f"Found {len(rows)} named controls. " + (", ".join(names[:8]) if names else "This application exposed none."))
+
+    def _controls_failed(self, error):
+        self.action_help.setText("App scan unavailable: " + str(error))
+
+    def _scan_finished(self):
+        self.scan_thread = None; self.scan_worker = None
+        self.scan.setEnabled(True); self.scan.setText("SCAN ACTIVE APP")
+
     def _validated_value(self, action, value):
         value = str(value)
         if action.name in ("type_text", "copy_text") and not value:
             raise ValueError("Enter text for this step.")
+        if action.name in ("focus_window", "invoke_control") and not value.strip():
+            raise ValueError("Enter a visible window or control name.")
+        if action.name == "set_control_text":
+            split_target_text(value)
         if action.name in ("click_point", "move_pointer", "double_click", "right_click"):
             if not re.fullmatch(r"\s*\d{1,5}\s*,\s*\d{1,5}\s*", value):
                 raise ValueError("Use x,y coordinates or press USE CURRENT CURSOR.")
@@ -1356,6 +1447,12 @@ class TaskStudio(QDialog):
             QMessageBox.information(self, "Empty plan", "Add at least one step."); return
         goal = self.goal.text().strip() or "Complete reviewed desktop mission"
         self.run_plan.emit(goal, plan); self.accept()
+
+    def reject(self):
+        if self.scan_thread is not None and self.scan_thread.isRunning():
+            self.action_help.setText("Wait for the active-app scan to finish before closing Mission Control.")
+            return
+        super().reject()
 
 
 class MainWindow(QMainWindow):
@@ -1511,7 +1608,10 @@ class MainWindow(QMainWindow):
         context_card = QFrame(); context_card.setObjectName("dataCard"); context_layout = QVBoxLayout(context_card)
         self.screen_context = QLabel("Reading active window…"); self.screen_context.setWordWrap(True)
         self.screen_context.setObjectName("dataValue"); context_layout.addWidget(QLabel("LIVE SCREEN CONTEXT"))
-        context_layout.addWidget(self.screen_context); layout.addWidget(context_card)
+        context_layout.addWidget(self.screen_context)
+        self.accessible_context = QLabel("Scan the active app to discover named controls.")
+        self.accessible_context.setWordWrap(True); self.accessible_context.setObjectName("hint")
+        context_layout.addWidget(self.accessible_context); layout.addWidget(context_card)
         info = QLabel(
             "JARVIS observes transient window metadata while Desktop Control is enabled. "
             "Screenshots are not stored. Sensitive keyboard, mouse, sharing and publishing actions always need approval."
@@ -1526,8 +1626,9 @@ class MainWindow(QMainWindow):
         mission_layout.addWidget(self.desktop_progress); layout.addWidget(mission)
         row = QHBoxLayout(); build = QPushButton("BUILD TASK PLAN"); build.setObjectName("primary")
         build.clicked.connect(self.open_task_studio)
+        scan = QPushButton("SCAN ACTIVE APP"); scan.clicked.connect(self._scan_active_app)
         stop = QPushButton("EMERGENCY STOP  CTRL+SHIFT+Q"); stop.setObjectName("danger"); stop.clicked.connect(self.stop_task)
-        row.addWidget(build); row.addWidget(stop); layout.addLayout(row)
+        row.addWidget(build); row.addWidget(scan); row.addWidget(stop); layout.addLayout(row)
         layout.addWidget(self._section("RECENT ACTION AUDIT"))
         self.desktop_audit = QListWidget(); layout.addWidget(self.desktop_audit, 1)
         return page
@@ -1559,6 +1660,18 @@ class MainWindow(QMainWindow):
     def _desktop_context_failed(self, _error):
         self._desktop_refresh_pending = False
         self.screen_context.setText("Desktop context is temporarily unavailable.")
+
+    def _scan_active_app(self):
+        self.accessible_context.setText("SCANNING WINDOWS ACCESSIBILITY CONTROLS…")
+        self._task(active_controls, (30,), self._active_controls_ready,
+                   lambda error: self.accessible_context.setText("App scan unavailable: " + str(error)))
+
+    def _active_controls_ready(self, rows):
+        if not rows:
+            self.accessible_context.setText("This app exposed no named controls. Coordinate actions remain available.")
+            return
+        summary = "  ·  ".join(f"{row['name']} [{row['type']}]" for row in rows[:18])
+        self.accessible_context.setText("NAMED CONTROLS  /  " + summary)
 
     def _change_context(self):
         mode = str(self.context_selector.currentData())

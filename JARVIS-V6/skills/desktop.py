@@ -7,6 +7,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from core.windows_automation import (
+    focus_window, inspect_active_app, invoke_control, set_control_text, validate_control_name,
+    validate_target_text, window_layout,
+)
+
 
 APPS = {
     "Notepad": ("exe", "notepad.exe"),
@@ -181,5 +186,10 @@ SKILL = {
         {"name": "media_key", "label": "Media or volume control", "description": "Use an approved media key.", "handler": media_key, "values": MEDIA_KEYS},
         {"name": "screenshot", "label": "Save screenshot", "description": "Save the desktop to Pictures/JARVIS Screenshots.", "handler": screenshot, "sensitive": True},
         {"name": "wait", "label": "Wait", "description": "Pause between desktop steps for at most 15 seconds.", "handler": wait},
+        {"name": "inspect_active_app", "label": "Inspect active application", "description": "Read named Windows accessibility controls from the active application without taking a screenshot.", "handler": inspect_active_app},
+        {"name": "focus_window", "label": "Focus open window", "description": "Focus one open window by a reviewed title fragment.", "handler": focus_window, "sensitive": True, "validator": validate_control_name},
+        {"name": "invoke_control", "label": "Activate named control", "description": "Activate one reviewed button, menu item or link by its accessible name.", "handler": invoke_control, "sensitive": True, "validator": validate_control_name},
+        {"name": "set_control_text", "label": "Enter text in named field", "description": "Set a reviewed text field using Control name || text.", "handler": set_control_text, "sensitive": True, "validator": validate_target_text},
+        {"name": "window_layout", "label": "Change active window layout", "description": "Minimize, maximize or restore the active window.", "handler": window_layout, "values": ("Minimize", "Maximize", "Restore")},
     ],
 }

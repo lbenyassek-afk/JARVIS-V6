@@ -224,7 +224,10 @@ class LLMClient:
             "You are a desktop plan compiler. Convert the user's goal into the smallest reliable "
             "sequence using only the supplied actions. Never invent an action, executable, URL, "
             "shell command or value outside allowed_values. Add a short wait after opening an app "
-            "when a later step needs that app ready. Coordinates must be explicit x,y values; if "
+            "when a later step needs that app ready. Prefer focus_window, invoke_control and "
+            "set_control_text with accessible names over fragile screen coordinates. For "
+            "set_control_text, format the value exactly as Control name || text. Coordinates must "
+            "be explicit x,y values; if "
             "coordinates or another required fact are missing, return needs_clarification with one "
             "short question and no steps. Return JSON only."
         )
