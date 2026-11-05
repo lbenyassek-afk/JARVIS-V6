@@ -54,15 +54,18 @@ DEFAULTS = {
         "wake_phrase": "hey jarvis",
         "wake_phrases": ["hey jarvis", "jarvis"],
         "end_silence_ms": 500,
+        "adaptive_silence": True,
+        "minimum_speech_ms": 150,
+        "max_utterance_seconds": 20,
         "speech_rate": -1,
         "speech_pitch": -4,
         "speech_volume": 90,
         "british_voice": "en-GB-ThomasNeural",
         "profile_version": 3,
-        "capture_profile_version": 3,
         "recognition_profile_version": 4,
         "output_profile_version": 5,
         "multilingual_profile_version": 1,
+        "capture_profile_version": 4,
     },
     "desktop": {
         "enabled": True,
@@ -172,6 +175,11 @@ def load_config() -> dict:
     if (int(saved_voice.get("capture_profile_version", 1)) < 2 and
             int(merged["voice"].get("end_silence_ms", 700)) == 700):
         merged["voice"]["end_silence_ms"] = 550
+    if int(saved_voice.get("capture_profile_version", 1)) < 4:
+        merged["voice"]["adaptive_silence"] = True
+        merged["voice"]["minimum_speech_ms"] = 150
+        merged["voice"]["max_utterance_seconds"] = 20
+        merged["voice"]["capture_profile_version"] = 4
     # V5.0/V5.1 defaulted to PocketSphinx, which is fully offline but often
     # misses natural conversational speech. Move that old default to the
     # faster free recognizer while preserving an explicit Gemini selection.

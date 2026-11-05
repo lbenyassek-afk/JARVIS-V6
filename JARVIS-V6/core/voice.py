@@ -28,7 +28,9 @@ BRITISH_VOICES = {
 
 
 def _spoken_text(text: str) -> str:
-    clean = re.sub(r"```.*?```", "Code example omitted from speech.", str(text), flags=re.S)
+    clean = re.sub(r"\n+Sources:\s*\n(?:-.*(?:\n|$))+", " Sources are shown on screen. ",
+                   str(text), flags=re.I)
+    clean = re.sub(r"```.*?```", "Code example omitted from speech.", clean, flags=re.S)
     clean = re.sub(r"https?://\S+", "source link", clean)
     clean = re.sub(r"[*_#`>|]", "", clean)
     # Remove formatting and repeated punctuation while keeping sentence stops;
@@ -39,7 +41,11 @@ def _spoken_text(text: str) -> str:
     clean = re.sub(r"([.!?])(?=\S)", r"\1 ", clean)
     clean = re.sub(r"\s*[-–—]\s*", " ", clean)
     clean = re.sub(r"\s+", " ", clean).strip()
-    return clean[:4_500]
+    if len(clean) > 1_800:
+        ending = max(clean.rfind(stop, 0, 1_800) for stop in (". ", "? ", "! "))
+        clean = clean[:ending + 1 if ending >= 600 else 1_800].rstrip()
+        clean += " The full answer is on screen."
+    return clean
 
 
 def synthesize(text: str, voice: str = "en-GB-ThomasNeural",

@@ -47,6 +47,15 @@ memory, credentials, executable, installer, update channel and prerelease track.
   local action/value allowlist before approval or execution. `/desktop off` exits.
 - Guided Gemini registration with live key-format feedback, stored-key retesting,
   explicit test/save states and Windows Credential Manager storage.
+- Five-stage Gemini registration diagnostics for key format, Google connectivity,
+  compatible model discovery, live generation and Windows Credential Manager storage.
+  Successful setup stays visible until the user presses Done and explains why the
+  key field was cleared.
+- Structured Gemini voice understanding with transcript confidence, language metadata,
+  background-audio rejection, adaptive end-of-speech timing and model fallback when a
+  specific Flash model reaches its quota.
+- Smarter answer continuity and self-checking for names, dates, quantities, assumptions
+  and next actions, plus transparent recovery from temporary Gemini server failures.
 - A full Capabilities screen reports ready, setup-required, disabled and future
   components without presenting unfinished integrations as working features.
 - Eighteen bounded desktop actions including approved applications, Unicode text,

@@ -16,6 +16,8 @@
 - Guided Gemini registration and a 20-item honest capabilities dashboard.
 - Seven-language chat, speech, neural voice, research routing and Unicode-aware
   retrieval, with Fast, Adaptive and Thorough intelligence profiles.
+- Five-stage Gemini registration, structured confidence-aware voice responses,
+  adaptive silence detection and model-specific quota recovery.
 - Independent V6 application, storage, credential, installer and update identities.
 - Inherited V5.3 chat, Gemini diagnostics, voice, memory encryption, recovery,
   backups, workspaces, permissions and bounded desktop actions.

@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QFrame, QGraphicsDropShadowEffect,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox, QInputDialog,
     QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSplitter, QStackedWidget,
-    QSpinBox, QTextEdit, QVBoxLayout, QWidget,
+    QSpinBox, QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
 )
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 
@@ -27,7 +27,10 @@ from core.config import load_config, save_config
 from core.conversation import delete_history, recent_messages
 from core.intent import is_weather_query, quick_reply, requested_location
 from core.local_core import respond as local_core_response
-from core.llm import LLMClient, normalize_gemini_key, route_mode, valid_gemini_key_format, validate_gemini_key
+from core.llm import (
+    LLMClient, inspect_gemini_connection, normalize_gemini_key, route_mode,
+    valid_gemini_key_format, validate_gemini_key,
+)
 from core.language import LANGUAGES, response_language
 from core.session import VoiceSession
 from core.workspace import save as save_record
@@ -48,6 +51,7 @@ from core.updates import check as check_for_updates
 from core.speech import transcribe_fast_free, transcribe_offline
 from core.planner import build as build_execution_plan
 from core.routines import delete as delete_routine, load as load_routines, save as save_routine, steps as routine_steps
+from core.voice_activity import silence_blocks, valid_capture
 from core import recovery
 from ui.productivity import (
     ActivityDialog, BackupDialog, CommandPalette, DiagnosticsDialog,
@@ -269,10 +273,15 @@ class AlwaysListener(QThread):
     level = pyqtSignal(float)
     fault = pyqtSignal(str)
 
-    def __init__(self, device_name: str = "", end_silence_ms: int = 550, parent=None):
+    def __init__(self, device_name: str = "", end_silence_ms: int = 550,
+                 adaptive_silence: bool = True, minimum_speech_ms: int = 150,
+                 max_utterance_seconds: int = 20, parent=None):
         super().__init__(parent)
         self.device_name = str(device_name or "")
-        self.end_silence_blocks = max(9, min(24, round(int(end_silence_ms) / 50)))
+        self.end_silence_ms = int(end_silence_ms)
+        self.adaptive_silence = bool(adaptive_silence)
+        self.minimum_speech_ms = max(100, min(500, int(minimum_speech_ms)))
+        self.max_utterance_seconds = max(5, min(30, int(max_utterance_seconds)))
         self._stop = threading.Event()
         self._manual = threading.Event()
 
@@ -369,12 +378,13 @@ class AlwaysListener(QThread):
                         speech_blocks += 1; quiet = 0
                     else:
                         quiet += 1
-                    reached_end = quiet >= self.end_silence_blocks and speech_blocks >= 2
-                    reached_limit = len(active) >= 300
+                    end_blocks = silence_blocks(self.end_silence_ms, speech_blocks, self.adaptive_silence)
+                    reached_end = quiet >= end_blocks and speech_blocks >= 2
+                    reached_limit = len(active) >= self.max_utterance_seconds * 20
                     if not (reached_end or reached_limit):
                         continue
                     pcm = np.concatenate(active, axis=0).astype("int16").tobytes()
-                    if peak < threshold or speech_blocks < 2:
+                    if not valid_capture(floor, peak, speech_blocks, self.minimum_speech_ms):
                         active, pre_roll, voiced, quiet, speech_blocks, speaking = [], [], 0, 0, 0, False
                         self.activity.emit("BACKGROUND AUDIO IGNORED")
                         continue
@@ -674,7 +684,7 @@ class ApiKeyDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("JARVIS // GEMINI SETUP")
-        self.setModal(True); self.resize(640, 540); self.setMinimumWidth(580)
+        self.setModal(True); self.resize(660, 620); self.setMinimumWidth(600)
         self.thread = None; self.worker = None; self.pending_key = ""
         layout = QVBoxLayout(self); layout.setContentsMargins(28, 26, 28, 26); layout.setSpacing(14)
         title = QLabel("GEMINI REGISTRATION"); title.setObjectName("section"); layout.addWidget(title)
@@ -704,6 +714,10 @@ class ApiKeyDialog(QDialog):
         layout.addWidget(show)
         self.format_status = QLabel("○ Waiting for a key")
         self.format_status.setObjectName("hint"); layout.addWidget(self.format_status)
+        self.checks = QLabel(
+            "○ FORMAT CHECK\n○ GOOGLE CONNECTION\n○ COMPATIBLE GEMINI MODEL\n○ LIVE GENERATION\n○ SECURE WINDOWS STORAGE")
+        self.checks.setObjectName("dataCard"); self.checks.setWordWrap(True); self.checks.setMargin(12)
+        layout.addWidget(self.checks)
         self.status = QLabel("● A key is already stored securely" if get_secret("gemini_api_key") else "○ No Gemini key stored")
         self.status.setObjectName("keyStatus"); self.status.setWordWrap(True); layout.addWidget(self.status)
         layout.addStretch()
@@ -717,8 +731,10 @@ class ApiKeyDialog(QDialog):
         self.test_button.clicked.connect(self._test)
         self.save_button = QPushButton("SAVE NOW — VERIFY LATER")
         self.save_button.clicked.connect(self._save_without_test)
+        self.done_button = QPushButton("DONE"); self.done_button.clicked.connect(self._done)
         row.addWidget(self.remove_button); row.addStretch(); layout.addLayout(row)
         connect_row = QHBoxLayout(); connect_row.addWidget(self.save_button); connect_row.addWidget(self.test_button)
+        connect_row.addWidget(self.done_button)
         layout.addLayout(connect_row)
 
     def _paste(self):
@@ -732,19 +748,27 @@ class ApiKeyDialog(QDialog):
         if not str(value).strip():
             self.format_status.setText("○ Waiting for a key"); return
         candidate = normalize_gemini_key(value)
-        self.format_status.setText(
-            "● Key format recognised — ready to test"
-            if valid_gemini_key_format(candidate) else
-            "○ This does not yet look like a complete Gemini AIza key")
+        valid = valid_gemini_key_format(candidate)
+        self.format_status.setText("● Key format recognised — ready to test" if valid else
+                                   "○ This does not yet look like a complete Gemini AIza key")
+        self.checks.setText(
+            ("● FORMAT CHECK" if valid else "○ FORMAT CHECK") +
+            "\n○ GOOGLE CONNECTION\n○ COMPATIBLE GEMINI MODEL\n○ LIVE GENERATION\n○ SECURE WINDOWS STORAGE")
 
     def _test(self):
         candidate = normalize_gemini_key(self.key.text()) or get_secret("gemini_api_key")
         if not candidate:
             self.status.setText("● Paste a Gemini API key first"); self.key.setFocus(); return
+        if not valid_gemini_key_format(candidate):
+            self.status.setText("● Paste the complete AIza key from Google AI Studio.")
+            self.key.setFocus(); return
         self.pending_key = candidate
         self.test_button.setEnabled(False); self.key.setEnabled(False)
+        self.save_button.setEnabled(False); self.remove_button.setEnabled(False); self.done_button.setEnabled(False)
         self.status.setText("● Testing network, key, model and generation…")
-        self.thread = QThread(self); self.worker = Task(validate_gemini_key, candidate, True)
+        self.checks.setText(
+            "● FORMAT CHECK\n◐ GOOGLE CONNECTION\n○ COMPATIBLE GEMINI MODEL\n○ LIVE GENERATION\n○ SECURE WINDOWS STORAGE")
+        self.thread = QThread(self); self.worker = Task(inspect_gemini_connection, candidate, True)
         self.worker.moveToThread(self.thread); self.thread.started.connect(self.worker.run)
         self.worker.done.connect(self._connected); self.worker.failed.connect(self._failed)
         self.worker.done.connect(self.thread.quit); self.worker.failed.connect(self.thread.quit)
@@ -754,17 +778,37 @@ class ApiKeyDialog(QDialog):
 
     def _thread_finished(self):
         self.thread = None; self.worker = None
+        self.save_button.setEnabled(True); self.done_button.setEnabled(True)
+        self.remove_button.setEnabled(bool(get_secret("gemini_api_key")))
 
-    def _connected(self, message):
+    def _done(self):
+        if self.thread is not None and self.thread.isRunning():
+            self.status.setText("● Please wait for the connection test to finish")
+            return
+        self.accept()
+
+    def _connected(self, report):
+        report = report if isinstance(report, dict) else {"message": str(report), "model": "Gemini",
+                                                          "model_count": 1, "generation": "ready", "latency_ms": 0}
+        generation = str(report.get("generation", "ready"))
+        generation_mark = "●" if generation == "ready" else "◐"
+        final_checks = (
+            f"● FORMAT CHECK\n● GOOGLE CONNECTION\n● COMPATIBLE GEMINI MODEL  /  {report.get('model')} "
+            f"({report.get('model_count')} available)\n{generation_mark} LIVE GENERATION  /  "
+            f"{generation.replace('_', ' ').upper()}\n● SECURE WINDOWS STORAGE")
         try:
             set_secret("gemini_api_key", self.pending_key)
             if not get_secret("gemini_api_key"):
                 raise RuntimeError("Windows Credential Manager did not retain the key")
         except Exception as exc:
             self._failed("Gemini connected, but secure storage failed: " + str(exc)); return
-        self.key.clear(); self.status.setText("● " + str(message) + " Key stored securely.")
+        self.key.clear(); self.status.setText(
+            "● " + str(report.get("message", "Gemini connected.")) +
+            f" Key stored securely and the entry box was cleared for privacy. Test completed in "
+            f"{report.get('latency_ms', 0)} ms.")
+        self.checks.setText(final_checks)
         self.remove_button.setEnabled(True); self.test_button.setText("3  TEST STORED KEY")
-        self.connected.emit(); QTimer.singleShot(500, self.accept)
+        self.connected.emit(); self.done_button.setFocus()
 
     def _save_without_test(self):
         candidate = normalize_gemini_key(self.key.text())
@@ -776,11 +820,15 @@ class ApiKeyDialog(QDialog):
             self.status.setText("● Windows Credential Manager could not store the key."); return
         self.pending_key = candidate; self.key.clear()
         self.status.setText("● Key stored securely. Live Gemini connection has not been verified.")
+        self.checks.setText(
+            "● FORMAT CHECK\n○ GOOGLE CONNECTION\n○ COMPATIBLE GEMINI MODEL\n○ LIVE GENERATION\n● SECURE WINDOWS STORAGE")
         self.remove_button.setEnabled(True); self.test_button.setText("3  TEST STORED KEY")
-        self.connected.emit(); QTimer.singleShot(700, self.accept)
+        self.connected.emit(); self.done_button.setFocus()
 
     def _failed(self, message):
         self.status.setText("● " + str(message))
+        current = self.checks.text().replace("◐ GOOGLE CONNECTION", "○ GOOGLE CONNECTION  /  FAILED")
+        self.checks.setText(current)
         self.test_button.setEnabled(True); self.key.setEnabled(True); self.key.setFocus()
 
     def _remove(self):
@@ -896,6 +944,7 @@ class SettingsDialog(QDialog):
             lambda: self.english_only.setEnabled(self.input_engine.currentData() == "gemini"))
         self.end_silence = QSpinBox(); self.end_silence.setRange(450, 1200); self.end_silence.setSingleStep(50)
         self.end_silence.setSuffix(" ms"); self.end_silence.setValue(int(cfg["voice"].get("end_silence_ms", 550)))
+        self.adaptive_silence = QCheckBox(); self.adaptive_silence.setChecked(cfg["voice"].get("adaptive_silence", True))
         self.speech_rate = QSpinBox(); self.speech_rate.setRange(-20, 20); self.speech_rate.setSuffix(" %")
         self.speech_rate.setValue(int(cfg["voice"].get("speech_rate", 0)))
         self.speech_pitch = QSpinBox(); self.speech_pitch.setRange(-10, 10); self.speech_pitch.setSuffix(" Hz")
@@ -986,6 +1035,7 @@ class SettingsDialog(QDialog):
             ("Always-listening microphone", self.always_listening),
             ("Microphone", self.microphone), ("Microphone check", self.mic_test),
             ("Wait after speech", self.end_silence),
+            ("Adaptive end of speech", self.adaptive_silence),
             ("Restrict Gemini voice to English", self.english_only),
             ("Voice speed", self.speech_rate), ("Voice pitch", self.speech_pitch),
             ("Voice volume", self.speech_volume),
@@ -1059,6 +1109,7 @@ class SettingsDialog(QDialog):
         cfg["voice"]["input_device"] = self.microphone.currentData() or ""
         cfg["voice"]["english_only"] = self.english_only.isChecked()
         cfg["voice"]["end_silence_ms"] = self.end_silence.value()
+        cfg["voice"]["adaptive_silence"] = self.adaptive_silence.isChecked()
         cfg["voice"]["speech_rate"] = self.speech_rate.value()
         cfg["voice"]["speech_pitch"] = self.speech_pitch.value()
         cfg["voice"]["speech_volume"] = self.speech_volume.value()
@@ -1502,6 +1553,7 @@ class MainWindow(QMainWindow):
         self.audio_output = None
         self.media_player = None
         self._voice_file = ""
+        self._last_spoken_text = ""
         self.registry = Registry(); self.registry.discover(__import__('pathlib').Path(__file__).resolve().parent.parent / "skills")
         self.task_executor = TaskExecutor(self.registry)
         self.global_hotkey = None
@@ -1567,7 +1619,7 @@ class MainWindow(QMainWindow):
         self.mode_selector.currentIndexChanged.connect(lambda: self.set_chat_mode(str(self.mode_selector.currentData())))
         title_row.addWidget(workspace_title); title_row.addStretch(); title_row.addWidget(self.mode_selector)
         rv.addLayout(title_row)
-        self.chat = QTextEdit(); self.chat.setReadOnly(True); self.chat.setOpenExternalLinks(True)
+        self.chat = QTextBrowser(); self.chat.setOpenExternalLinks(True)
         self.chat.setObjectName("chat"); rv.addWidget(self.chat, 1)
         input_row = QHBoxLayout(); input_row.setSpacing(10)
         self.input = QLineEdit(); self.input.setPlaceholderText("Ask JARVIS anything…"); self.input.setMinimumHeight(50)
@@ -1927,6 +1979,7 @@ class MainWindow(QMainWindow):
             self._stop_always_listener()
             voice_cfg = load_config()["voice"]
             voice = voice_cfg.get("british_voice", "en-GB-ThomasNeural")
+            self._last_spoken_text = str(answer)
             self._task(synthesize, (str(answer), voice, voice_cfg.get("speech_rate", 0),
                                     voice_cfg.get("speech_pitch", 0),
                                     load_config()["assistant"].get("language", "auto")),
@@ -1969,19 +2022,22 @@ class MainWindow(QMainWindow):
             except Exception: pass
 
     def _voice_failed(self, message):
-        """Use an installed en-GB Windows voice when neural audio is offline."""
-        self.append("SYSTEM", "Cinematic neural voice is unavailable; using the Windows voice temporarily. " + str(message))
+        """Use a matching installed Windows voice when neural audio is offline."""
+        self.append("SYSTEM", "Neural voice is unavailable; using the Windows voice temporarily. " + str(message))
         self.status.setText("● NEURAL VOICE OFFLINE")
         try:
             from PyQt6.QtTextToSpeech import QTextToSpeech
             if not hasattr(self, "tts"):
                 self.tts = QTextToSpeech(self)
                 self.tts.stateChanged.connect(self._tts_state_changed)
+            cfg = load_config(); code = response_language(
+                self._last_spoken_text, cfg["assistant"].get("language", "auto"))
+            locale = LANGUAGES.get(code, LANGUAGES["en"])["locale"].replace("-", "_").lower()
             for voice in self.tts.availableVoices():
-                if voice.locale().name().lower().startswith("en_gb"):
+                if voice.locale().name().lower().startswith(locale):
                     self.tts.setVoice(voice); break
-            latest = self.client.history[-1]["content"] if self.client.history else ""
-            if latest: self.tts.say(str(latest))
+            if self._last_spoken_text:
+                self.tts.say(self._last_spoken_text)
         except Exception:
             self._sync_always_listener()
 
@@ -2028,7 +2084,10 @@ class MainWindow(QMainWindow):
 
     def _start_listener(self, manual=False):
         cfg = load_config()["voice"]
-        listener = AlwaysListener(cfg.get("input_device", ""), cfg.get("end_silence_ms", 550), self)
+        listener = AlwaysListener(
+            cfg.get("input_device", ""), cfg.get("end_silence_ms", 550),
+            cfg.get("adaptive_silence", True), cfg.get("minimum_speech_ms", 150),
+            cfg.get("max_utterance_seconds", 20), self)
         listener.captured.connect(self._voice_captured)
         listener.activity.connect(self._always_activity)
         listener.level.connect(self._voice_level)

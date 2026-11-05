@@ -21,7 +21,7 @@ def snapshot(registry=None) -> list[dict]:
     return [
         {"id": "local_core", "state": "ready", "detail": "Bounded offline commands and local memory search"},
         {"id": "gemini", "state": "configured" if gemini_ready else "setup_required",
-         "detail": "Key stored; live test is available in Settings" if gemini_ready else "No Gemini key stored"},
+         "detail": "Key stored; five-stage live diagnostics available" if gemini_ready else "No Gemini key stored"},
         {"id": "fast_chat", "state": "ready" if gemini_ready else "setup_required",
          "detail": "Gemini fast model" if gemini_ready else "Connect Gemini"},
         {"id": "deep_research", "state": "ready" if gemini_ready else "setup_required",
@@ -31,7 +31,7 @@ def snapshot(registry=None) -> list[dict]:
         {"id": "memory", "state": "ready" if cfg["memory"].get("enabled", True) else "disabled",
          "detail": "Encrypted organized memory and relevant retrieval"},
         {"id": "voice_input", "state": "ready" if voice_ready else "unavailable",
-         "detail": "Speech packages installed" if voice_ready else "Speech packages are missing"},
+         "detail": "Adaptive capture and confidence-aware transcription" if voice_ready else "Speech packages are missing"},
         {"id": "cinematic_voice", "state": "ready" if neural_voice else "fallback",
          "detail": "Edge neural voice installed" if neural_voice else "Windows voice fallback only"},
         {"id": "desktop_control", "state": "ready" if desktop_ready else "unavailable",

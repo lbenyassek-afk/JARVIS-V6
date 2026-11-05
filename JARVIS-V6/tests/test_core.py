@@ -8,7 +8,10 @@ from unittest.mock import patch
 
 from core import backup, capabilities, config, instructions, local_core, manager_prompt, memory, metrics, permissions, planner, plugin_runtime, plugins, prompt, recovery, routines, weather, providers, workspace
 from core.intent import is_weather_query, quick_reply, requested_location
-from core.llm import LLMClient, LLMError, normalize_gemini_key, route_mode, valid_gemini_key_format, validate_gemini_key
+from core.llm import (
+    LLMClient, LLMError, _api_error, inspect_gemini_connection, normalize_gemini_key,
+    route_mode, valid_gemini_key_format, validate_gemini_key,
+)
 from core.skills import Action, Registry
 from core.tasks import Step, TaskExecutor
 from core.desktop_intent import parse as parse_desktop_command
@@ -17,6 +20,7 @@ from core.voice import _spoken_text
 from core.speech import transcribe_fast_free, transcribe_offline
 from core.language import detect_language, speech_locale, voice_for_text
 from core.retrieval import relevance
+from core.voice_activity import silence_blocks, valid_capture
 
 
 class CoreTests(unittest.TestCase):
@@ -135,6 +139,8 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(voice["end_silence_ms"], 500)
         self.assertEqual(voice["input_engine"], "fast_free")
         self.assertEqual(voice["activation_mode"], "natural")
+        self.assertTrue(voice["adaptive_silence"])
+        self.assertEqual(voice["max_utterance_seconds"], 20)
         selected = config.load_config()
         selected["voice"]["british_voice"] = "en-GB-RyanNeural"
         config.save_config(selected)
@@ -203,6 +209,19 @@ class CoreTests(unittest.TestCase):
         spoken = _spoken_text("Good morning, Reda. The system is ready... Shall we begin?")
         self.assertNotRegex(spoken, r"[,;:…]")
         self.assertEqual(spoken, "Good morning Reda. The system is ready Shall we begin?")
+        sourced = _spoken_text("Answer.\n\nSources:\n- Example: https://example.com/report")
+        self.assertIn("Sources are shown on screen", sourced)
+        self.assertNotIn("example.com", sourced)
+        long_spoken = _spoken_text(("A useful sentence. " * 200).strip())
+        self.assertLess(len(long_spoken), 1900)
+        self.assertTrue(long_spoken.endswith("The full answer is on screen."))
+
+    def test_adaptive_voice_activity_closes_short_turns_and_rejects_noise(self):
+        self.assertEqual(silence_blocks(500, 4, True), 7)
+        self.assertEqual(silence_blocks(500, 30, True), 10)
+        self.assertEqual(silence_blocks(500, 4, False), 10)
+        self.assertTrue(valid_capture(.001, .004, 4, 150))
+        self.assertFalse(valid_capture(.001, .0012, 8, 150))
 
     def test_instant_intents_and_weather_location(self):
         self.assertEqual(quick_reply("Hi Jarvis", "JARVIS", "Reda"),
@@ -300,6 +319,21 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(result["transcript"], "Plan my day")
         self.assertIn("important task", result["answer"])
 
+    def test_structured_gemini_voice_rejects_low_confidence_background_audio(self):
+        response = unittest.mock.Mock(status_code=200)
+        response.json.return_value = {"candidates": [{"content": {"parts": [{"text": json.dumps({
+            "status": "ok", "transcript": "maybe television", "answer": "Hello",
+            "detected_language": "en", "confidence": .2,
+        })}]}}]}
+        client = LLMClient()
+        with patch("core.llm.get_secret", return_value="AIza-test"), \
+             patch.object(client.session, "post", return_value=response) as post:
+            result = client.chat_audio(b"\x00\x00" * 4000, 16_000)
+        self.assertEqual(result["status"], "no_speech")
+        generation = post.call_args.kwargs["json"]["generationConfig"]
+        self.assertEqual(generation["responseMimeType"], "application/json")
+        self.assertIn("confidence", generation["responseSchema"]["required"])
+
     def test_voice_429_uses_one_different_available_model(self):
         limited = unittest.mock.Mock(status_code=429)
         success = unittest.mock.Mock(status_code=200)
@@ -315,6 +349,19 @@ class CoreTests(unittest.TestCase):
         self.assertIn("gemini-3.5-flash:", post.call_args.args[0])
         self.assertEqual(result["answer"], "Hello, Reda.")
         self.assertNotIn("tools", post.call_args.kwargs["json"])
+
+    def test_text_chat_recovers_from_model_specific_rate_limit(self):
+        limited = unittest.mock.Mock(status_code=429)
+        success = unittest.mock.Mock(status_code=200)
+        success.json.return_value = {"candidates": [{"content": {"parts": [{"text": "Recovered answer"}]}}]}
+        client = LLMClient(); messages = [{"role": "user", "content": "Help me plan"}]
+        with patch("core.llm.get_secret", return_value="AIza-test"), \
+             patch("core.llm._AVAILABLE_MODELS", {"gemini-3.5-flash-lite", "gemini-3.5-flash"}), \
+             patch.object(client.session, "post", side_effect=[limited, success]) as post:
+            answer = client._gemini(messages, config.load_config(), "chat")
+        self.assertEqual(answer, "Recovered answer")
+        self.assertEqual(post.call_count, 2)
+        self.assertIn("gemini-3.5-flash:", post.call_args.args[0])
 
     def test_credentials_are_never_stored(self):
         result = memory.remember("notes", "api_key", "sk-abcdefghijklmnopqrstuvwxyz")
@@ -431,11 +478,29 @@ class CoreTests(unittest.TestCase):
         generated.json.return_value = {"candidates": [{"content": {"parts": [{"text": "CONNECTED"}]}}]}
         with patch("core.llm.requests.get", return_value=models), \
              patch("core.llm.requests.post", return_value=generated):
-            result = validate_gemini_key("AIza-test", True)
+            key = "AIza" + "A" * 32
+            result = validate_gemini_key(key, True)
         self.assertIn("Gemini connected successfully", result)
         rejected = unittest.mock.Mock(status_code=403)
         with patch("core.llm.requests.get", return_value=rejected), self.assertRaises(LLMError):
             validate_gemini_key("not-a-key")
+
+    def test_gemini_registration_returns_safe_stage_diagnostics(self):
+        models = unittest.mock.Mock(status_code=200)
+        models.json.return_value = {"models": [{
+            "name": "models/gemini-3.5-flash-lite", "supportedGenerationMethods": ["generateContent"],
+        }]}
+        generated = unittest.mock.Mock(status_code=429)
+        key = "AIza" + "B" * 32
+        with patch("core.llm.requests.get", return_value=models), \
+             patch("core.llm.requests.post", return_value=generated):
+            report = inspect_gemini_connection(key, True)
+        self.assertEqual(report["generation"], "quota_limited")
+        self.assertEqual(report["model_count"], 1)
+        self.assertNotIn(key, json.dumps(report))
+        leaked = unittest.mock.Mock()
+        leaked.json.return_value = {"error": {"message": f"token={key}"}}
+        self.assertNotIn(key, _api_error(leaked))
 
     def test_gemini_key_can_be_extracted_from_pasted_text(self):
         key = "AIza" + "A" * 32
@@ -453,7 +518,7 @@ class CoreTests(unittest.TestCase):
         with patch("core.llm.requests.get", return_value=models), \
              patch("core.llm.requests.post", side_effect=requests.Timeout):
             result = validate_gemini_key("AIza" + "A" * 32, True)
-        self.assertIn("key was saved", result)
+        self.assertIn("key can still be saved", result)
 
     def test_custom_instructions_are_separate_and_reject_secrets(self):
         instructions.save("Be concise and prioritize schoolwork.")

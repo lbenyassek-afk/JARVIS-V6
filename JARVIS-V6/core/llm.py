@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import re
+import time
 import wave
 
 import requests
@@ -82,6 +83,8 @@ def _api_error(response) -> str:
         message = str(response.json().get("error", {}).get("message", "")).strip()
     except Exception:
         message = ""
+    message = re.sub(r"AIza[A-Za-z0-9_-]{12,}", "[redacted Gemini key]", message)
+    message = re.sub(r"\b(token|secret|password)\s*[:=]\s*\S+", r"\1=[redacted]", message, flags=re.I)
     return message[:300]
 
 
@@ -109,11 +112,14 @@ def _gemini_rejection(response, stage: str) -> LLMError:
     return LLMError(f"Gemini {stage} failed (HTTP {response.status_code}). {detail}".strip())
 
 
-def validate_gemini_key(key: str, verify_generation: bool = False) -> str:
-    """Discover available models and optionally prove generation end to end."""
+def inspect_gemini_connection(key: str, verify_generation: bool = True) -> dict:
+    """Validate one key without exposing it and return stage-by-stage diagnostics."""
+    started = time.perf_counter()
     key = normalize_gemini_key(key)
     if not key:
         raise LLMError("Paste a Gemini API key first.")
+    if not valid_gemini_key_format(key):
+        raise LLMError("The key format is incomplete. Gemini API keys begin with AIza; paste the complete key from Google AI Studio.")
     try:
         response = requests.get(
             "https://generativelanguage.googleapis.com/v1beta/models",
@@ -138,6 +144,8 @@ def validate_gemini_key(key: str, verify_generation: bool = False) -> str:
     _AVAILABLE_MODELS.clear()
     _AVAILABLE_MODELS.update(supported)
     model = _supported_model("gemini-flash-latest")
+    generation_state = "not_requested"
+    message = f"Gemini connected successfully with {model}."
     if verify_generation:
         try:
             generated = requests.post(
@@ -148,23 +156,40 @@ def validate_gemini_key(key: str, verify_generation: bool = False) -> str:
                 timeout=(12, 60),
             )
         except requests.Timeout:
-            return (f"Gemini key verified with {model}. The optional generation test timed out, "
-                    "so the key was saved; use Fast Chat to retry.")
+            generation_state = "timeout"
+            message = (f"Gemini key verified with {model}. The optional generation test timed out, "
+                       "so the key can still be saved; use Fast Chat to retry.")
         except requests.RequestException as exc:
-            return (f"Gemini key verified with {model}. The optional generation test could not finish "
-                    f"({_network_error(exc)}); the key was saved.")
-        if generated.status_code == 429:
-            return (f"Gemini key verified with {model}, but Google reports that its current quota is exhausted. "
-                    "The key was saved for later use.")
-        if generated.status_code >= 400:
-            raise _gemini_rejection(generated, "generation test")
-        try:
-            text = generated.json()["candidates"][0]["content"]["parts"][0]["text"]
-        except Exception as exc:
-            raise LLMError("Gemini connected but returned an unreadable test response.") from exc
-        if "CONNECTED" not in str(text).upper():
-            raise LLMError("Gemini connected but did not complete its generation test.")
-    return f"Gemini connected successfully with {model}."
+            generation_state = "network_deferred"
+            message = (f"Gemini key verified with {model}. The optional generation test could not finish "
+                       f"({_network_error(exc)}); the key can still be saved.")
+        else:
+            if generated.status_code == 429:
+                generation_state = "quota_limited"
+                message = (f"Gemini key verified with {model}, but Google reports that its current free quota "
+                           "is exhausted. The key can be saved for later use.")
+            elif generated.status_code >= 400:
+                raise _gemini_rejection(generated, "generation test")
+            else:
+                try:
+                    text = generated.json()["candidates"][0]["content"]["parts"][0]["text"]
+                except Exception as exc:
+                    raise LLMError("Gemini connected but returned an unreadable test response.") from exc
+                if "CONNECTED" not in str(text).upper():
+                    raise LLMError("Gemini connected but did not complete its generation test.")
+                generation_state = "ready"
+    return {
+        "message": message,
+        "model": model,
+        "model_count": len(supported),
+        "generation": generation_state,
+        "latency_ms": round((time.perf_counter() - started) * 1000),
+    }
+
+
+def validate_gemini_key(key: str, verify_generation: bool = False) -> str:
+    """Compatibility wrapper used by startup checks and existing integrations."""
+    return str(inspect_gemini_connection(key, verify_generation)["message"])
 
 
 def _supported_model(preferred: str) -> str:
@@ -193,6 +218,49 @@ def _voice_fallback_model(current: str) -> str | None:
             return candidate
     candidates = sorted(name for name in _AVAILABLE_MODELS if "flash" in name and name != current)
     return candidates[0] if candidates else None
+
+
+def _parse_voice_response(raw: str) -> dict:
+    raw = str(raw or "").strip()
+    if not raw:
+        raise LLMError("Gemini returned an empty voice response.")
+    try:
+        data = json.loads(raw.removeprefix("```json").removesuffix("```").strip())
+    except (ValueError, TypeError):
+        data = None
+    if isinstance(data, dict):
+        status = str(data.get("status", "")).strip().casefold()
+        transcript = str(data.get("transcript", "")).strip()
+        answer = str(data.get("answer", "")).strip()
+        language = str(data.get("detected_language", "")).strip()[:20]
+        try:
+            confidence = max(0.0, min(1.0, float(data.get("confidence", 1))))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if status not in ("ok", "no_speech", "non_english", "standby"):
+            raise LLMError("Gemini returned an unknown voice status.")
+        if status != "ok" or confidence < .35:
+            return {"status": status if status != "ok" else "no_speech", "transcript": "",
+                    "answer": "", "language": language, "confidence": confidence}
+        if not transcript or not answer:
+            raise LLMError("Gemini did not return a complete transcript and answer.")
+        return {"status": "ok", "transcript": transcript, "answer": answer,
+                "language": language, "confidence": confidence}
+    # Compatibility with responses created by builds before structured voice JSON.
+    status_match = re.search(r"<status>\s*([^<]+)\s*</status>", raw, re.I)
+    transcript_match = re.search(r"<transcript>(.*?)</transcript>", raw, re.I | re.S)
+    answer_match = re.search(r"<answer>(.*?)</answer>", raw, re.I | re.S)
+    if not status_match and not transcript_match and not answer_match:
+        raise LLMError("Gemini returned an unreadable voice response.")
+    status = status_match.group(1).strip().lower() if status_match else "ok"
+    if status in ("no_speech", "non_english", "standby"):
+        return {"status": status, "transcript": "", "answer": "", "language": "", "confidence": 1.0}
+    transcript = transcript_match.group(1).strip() if transcript_match else ""
+    answer = answer_match.group(1).strip() if answer_match else ""
+    if not transcript or not answer:
+        raise LLMError("Gemini did not return a complete transcript and answer.")
+    return {"status": "ok", "transcript": transcript, "answer": answer,
+            "language": "", "confidence": 1.0}
 
 
 class LLMClient:
@@ -329,6 +397,13 @@ class LLMClient:
         key = get_secret("gemini_api_key")
         if not key:
             raise LLMError("Gemini API key is missing. Open Settings and test your key.")
+        if int(sample_rate) < 8_000 or not pcm_bytes:
+            return {"status": "no_speech", "transcript": "", "answer": "", "confidence": 0.0}
+        duration = len(pcm_bytes) / (2 * int(sample_rate))
+        if duration < .16:
+            return {"status": "no_speech", "transcript": "", "answer": "", "confidence": 0.0}
+        if duration > 30:
+            raise LLMError("That voice turn was longer than 30 seconds. Pause briefly and try a shorter request.")
         cfg = load_config()
         mode = mode if mode in ("auto", "chat", "deep_search", "reflection") else "auto"
         messages = system_messages("")
@@ -347,14 +422,20 @@ class LLMClient:
             if selected_language != "auto" else
             "Understand the spoken language and answer in that same language."
         )
+        structured = mode != "deep_search"
         system += (
             "\n\n[VOICE TURN]\n" + mode_rule + " " + language_rule +
-            " If there is no clear human speech, return <status>no_speech</status>. "
+            " Detect near-field human speech and ignore music, television, keyboard noise and distant voices. "
+            "If speech is unclear, never guess. Keep the spoken answer natural and compact unless the user asks for detail. "
+            "Avoid tables and long raw URLs in the spoken answer. "
             + (f"The speech must begin with the wake phrase '{wake_phrase}'. If it does not, "
-               "return <status>standby</status>. If it does, omit the wake phrase from the transcript. "
+               "use status standby. If it does, omit the wake phrase from the transcript. "
                if require_wake else "") +
-            "Otherwise return exactly <status>ok</status><transcript>the user's exact words"
-            "</transcript><answer>your complete answer</answer>. Never invent a transcript."
+            ("Return only the required JSON object with the exact transcript, answer, detected language and "
+             "a confidence from 0 to 1. Use status no_speech when there is no clear human speech."
+             if structured else
+             "Return exactly <status>ok</status><transcript>the user's exact words</transcript>"
+             "<answer>your complete answer</answer>. Use status no_speech when needed. Never invent a transcript.")
         )
         wav = io.BytesIO()
         with wave.open(wav, "wb") as stream:
@@ -378,9 +459,27 @@ class LLMClient:
         preferred = cfg["llm"].get("fast_model" if mode in ("auto", "chat") else "smart_model",
                                    "gemini-3.5-flash-lite")
         model = _supported_model(preferred)
-        generation = {"temperature": .35, "maxOutputTokens": 650 if mode in ("auto", "chat") else 1900}
+        profile = cfg["assistant"].get("intelligence_profile", "adaptive")
+        response_length = cfg["assistant"].get("response_length", "balanced")
+        voice_budget = {"concise": 320, "balanced": 650, "detailed": 1100}.get(response_length, 650)
+        if profile == "fast": voice_budget = min(voice_budget, 450)
+        generation = {"temperature": .25, "maxOutputTokens": voice_budget if mode in ("auto", "chat") else 1900}
         if mode == "reflection":
-            generation["thinkingConfig"] = {"thinkingBudget": 1536}
+            generation["thinkingConfig"] = {"thinkingBudget": 768 if profile == "fast" else 1536}
+        if structured:
+            generation.update({
+                "responseMimeType": "application/json",
+                "responseSchema": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "status": {"type": "STRING", "enum": ["ok", "no_speech", "non_english", "standby"]},
+                        "transcript": {"type": "STRING"}, "answer": {"type": "STRING"},
+                        "detected_language": {"type": "STRING"},
+                        "confidence": {"type": "NUMBER", "minimum": 0, "maximum": 1},
+                    },
+                    "required": ["status", "transcript", "answer", "detected_language", "confidence"],
+                },
+            })
         payload = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": contents,
@@ -427,17 +526,7 @@ class LLMClient:
             raw = "".join(part.get("text", "") for part in parts).strip()
         except Exception as exc:
             raise LLMError("Gemini returned an invalid voice response.") from exc
-        status_match = re.search(r"<status>\s*([^<]+)\s*</status>", raw, re.I)
-        status = status_match.group(1).strip().lower() if status_match else "ok"
-        if status in ("no_speech", "non_english", "standby"):
-            return {"status": status, "transcript": "", "answer": ""}
-        transcript_match = re.search(r"<transcript>(.*?)</transcript>", raw, re.I | re.S)
-        answer_match = re.search(r"<answer>(.*?)</answer>", raw, re.I | re.S)
-        transcript = transcript_match.group(1).strip() if transcript_match else "Voice command"
-        answer = answer_match.group(1).strip() if answer_match else raw
-        if not answer:
-            raise LLMError("Gemini heard the voice command but returned no answer.")
-        return {"status": "ok", "transcript": transcript, "answer": answer}
+        return _parse_voice_response(raw)
 
     def _gemini(self, messages: list[dict], cfg: dict, mode: str) -> str:
         provider = select_provider(cfg, mode)
@@ -468,7 +557,12 @@ class LLMClient:
                 "effects and failure modes. Give a practical recommendation after the analysis."
             ),
         }
-        system += "\n\n" + mode_rules[mode]
+        system += "\n\n" + mode_rules[mode] + (
+            "\n\n[ANSWER QUALITY] Resolve references using the relevant conversation and memory. "
+            "Do not repeat information the user already knows. Check names, dates, units and assumptions "
+            "before answering. When uncertainty changes the recommendation, state it briefly. End with a "
+            "clear next action when the user is planning or deciding."
+        )
         contents = []
         for message in messages:
             if message["role"] == "system":
@@ -506,6 +600,19 @@ class LLMClient:
                 params={"key": key}, json=payload,
                 timeout=(12, 120 if mode != "chat" else 75),
             )
+            if response.status_code == 429:
+                if not _AVAILABLE_MODELS:
+                    try:
+                        validate_gemini_key(key)
+                    except LLMError:
+                        pass
+                fallback = _voice_fallback_model(model)
+                if fallback:
+                    response = self._post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{fallback}:generateContent",
+                        params={"key": key}, json=payload,
+                        timeout=(12, 120 if mode != "chat" else 75),
+                    )
         except requests.Timeout as exc:
             raise LLMError("Gemini took too long to answer. Check your internet and try again.") from exc
         except requests.RequestException as exc:
@@ -520,10 +627,15 @@ class LLMClient:
             raise LLMError("This Gemini model is unavailable for your key. Open Settings and test Gemini again.")
         if response.status_code == 429:
             raise LLMError("Gemini rate limit reached. Wait briefly and try again.")
+        if response.status_code >= 500:
+            raise LLMError("Gemini is temporarily unavailable. Your conversation is safe; try again shortly.")
         response.raise_for_status()
         try:
             data = response.json()
             candidate = data["candidates"][0]
+            if not candidate.get("content", {}).get("parts"):
+                reason = str(candidate.get("finishReason", "unknown reason")).replace("_", " ").lower()
+                raise LLMError(f"Gemini could not complete that answer ({reason}). Rephrase the request and try again.")
             parts = candidate["content"]["parts"]
             answer = "".join(part.get("text", "") for part in parts).strip()
             if not answer:
@@ -543,6 +655,8 @@ class LLMClient:
                         f"- {title}: {url}" for title, url in sources[:8]
                     )
             return answer
+        except LLMError:
+            raise
         except Exception as exc:
             raise LLMError("Gemini returned a malformed response.") from exc
 
