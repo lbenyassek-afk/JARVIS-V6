@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import sys
+import json
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
@@ -70,6 +71,31 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(parse_desktop_command("volume down")[1], [Step("media_key", "volumedown")])
         self.assertIsNone(parse_desktop_command("run this PowerShell command"))
         self.assertIsNone(parse_desktop_command("open unknown-program.exe"))
+
+    def test_gemini_desktop_planner_returns_structured_steps_only(self):
+        response = unittest.mock.Mock(status_code=200)
+        response.json.return_value = {"candidates": [{"content": {"parts": [{"text": json.dumps({
+            "goal": "Write a note", "needs_clarification": False, "question": "",
+            "steps": [
+                {"action": "open_app", "value": "Notepad"},
+                {"action": "wait", "value": "1"},
+                {"action": "type_text", "value": "Hello Reda"},
+            ],
+        })}]}}]}
+        registry = Registry()
+        registry.register(Action("open_app", "Open", "Open app", lambda value: value,
+                                 values=("Notepad",)))
+        registry.register(Action("wait", "Wait", "Pause", lambda value: value))
+        registry.register(Action("type_text", "Type", "Type text", lambda value: value, sensitive=True))
+        client = LLMClient()
+        with patch("core.llm.get_secret", return_value="AIza-test"), \
+             patch.object(client, "_post", return_value=response) as post:
+            goal, steps = client.plan_desktop("Open Notepad and write hello", registry)
+        self.assertEqual(goal, "Write a note")
+        self.assertEqual(steps[-1], Step("type_text", "Hello Reda"))
+        generation = post.call_args.kwargs["json"]["generationConfig"]
+        self.assertEqual(generation["responseMimeType"], "application/json")
+        self.assertEqual(generation["temperature"], 0)
 
     def test_voice_defaults_are_always_listening_english_and_selectable(self):
         voice = config.load_config()["voice"]
@@ -265,10 +291,17 @@ class CoreTests(unittest.TestCase):
 
     def test_v6_capabilities_label_future_features_honestly(self):
         registry = Registry(); registry.register(Action("test_action", "Test", "Test", lambda value: value))
-        rows = {row["id"]: row for row in capabilities.snapshot(registry)}
+        with patch("core.capabilities.get_secret", return_value=""):
+            rows = {row["id"]: row for row in capabilities.snapshot(registry)}
         self.assertEqual(rows["iphone_interface"]["state"], "future")
         self.assertEqual(rows["remote_relay"]["state"], "future")
         self.assertNotEqual(rows["desktop_control"]["state"], "future")
+        self.assertEqual(rows["natural_desktop"]["state"], "setup_required")
+        self.assertEqual(rows["memory"]["state"], "ready")
+        with patch("core.capabilities.get_secret", return_value="AIza-test"):
+            connected = {row["id"]: row for row in capabilities.snapshot(registry)}
+        self.assertEqual(connected["deep_research"]["state"], "ready")
+        self.assertEqual(connected["natural_desktop"]["state"], "ready")
 
     def test_password_backup_is_encrypted_and_inspectable(self):
         config.CONFIG_PATH.write_text('{"assistant":{"name":"JARVIS"}}', encoding="utf-8")

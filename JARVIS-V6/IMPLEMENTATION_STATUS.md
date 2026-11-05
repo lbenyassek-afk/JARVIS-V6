@@ -9,6 +9,9 @@
   colours, live preview and immediate application across the HUD and presence visual.
 - Desktop Mission Control with goal-based reviewed plans, risk labels, step ordering,
   cursor capture, live execution progress, full encrypted audit and contextual failures.
+- Session-only `/desktop control` conversation mode for natural typed or spoken goals,
+  with structured Gemini planning and mandatory local allowlist validation.
+- Guided Gemini registration and a 17-item honest capabilities dashboard.
 - Independent V6 application, storage, credential, installer and update identities.
 - Inherited V5.3 chat, Gemini diagnostics, voice, memory encryption, recovery,
   backups, workspaces, permissions and bounded desktop actions.

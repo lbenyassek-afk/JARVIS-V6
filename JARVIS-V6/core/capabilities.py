@@ -14,16 +14,31 @@ def snapshot(registry=None) -> list[dict]:
     desktop_errors = list(getattr(registry, "errors", [])) if registry is not None else []
     desktop_actions = len(getattr(registry, "actions", {})) if registry is not None else 0
     companion_enabled = bool(cfg.get("companion", {}).get("enabled", False))
+    gemini_ready = bool(get_secret("gemini_api_key"))
+    desktop_ready = bool(desktop_actions and not desktop_errors)
     return [
         {"id": "local_core", "state": "ready", "detail": "Bounded offline commands and local memory search"},
-        {"id": "gemini", "state": "configured" if get_secret("gemini_api_key") else "setup_required",
-         "detail": "Key stored; live test is available in Settings" if get_secret("gemini_api_key") else "No Gemini key stored"},
+        {"id": "gemini", "state": "configured" if gemini_ready else "setup_required",
+         "detail": "Key stored; live test is available in Settings" if gemini_ready else "No Gemini key stored"},
+        {"id": "fast_chat", "state": "ready" if gemini_ready else "setup_required",
+         "detail": "Gemini fast model" if gemini_ready else "Connect Gemini"},
+        {"id": "deep_research", "state": "ready" if gemini_ready else "setup_required",
+         "detail": "Google Search grounding with cited sources" if gemini_ready else "Connect Gemini"},
+        {"id": "memory", "state": "ready" if cfg["memory"].get("enabled", True) else "disabled",
+         "detail": "Encrypted organized memory and relevant retrieval"},
         {"id": "voice_input", "state": "ready" if voice_ready else "unavailable",
          "detail": "Speech packages installed" if voice_ready else "Speech packages are missing"},
         {"id": "cinematic_voice", "state": "ready" if neural_voice else "fallback",
          "detail": "Edge neural voice installed" if neural_voice else "Windows voice fallback only"},
-        {"id": "desktop_control", "state": "ready" if desktop_actions and not desktop_errors else "unavailable",
+        {"id": "desktop_control", "state": "ready" if desktop_ready else "unavailable",
          "detail": f"{desktop_actions} allowlisted action(s)" if not desktop_errors else "; ".join(desktop_errors)},
+        {"id": "natural_desktop", "state": "ready" if desktop_ready and gemini_ready else "setup_required",
+         "detail": "/desktop control with structured planning" if gemini_ready else "Connect Gemini for multi-step planning"},
+        {"id": "appearance", "state": "ready", "detail": "Six themes, custom accent and five presence designs"},
+        {"id": "workspaces", "state": "ready", "detail": "Personal, School and Business contexts"},
+        {"id": "weather", "state": "ready" if cfg.get("plugins", {}).get("enabled", {}).get("weather", True) else "disabled",
+         "detail": "Live location-aware weather"},
+        {"id": "recovery_backup", "state": "ready", "detail": "Encrypted recovery state and password backups"},
         {"id": "companion_transport", "state": "enabled" if companion_enabled else "disabled",
          "detail": "Authenticated local inbox"},
         {"id": "iphone_interface", "state": "future", "detail": "Not implemented in Alpha 1"},

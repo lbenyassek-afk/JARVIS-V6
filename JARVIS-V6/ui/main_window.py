@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from core.commands import handle_memory_command
+from core.capabilities import snapshot as capability_snapshot
 from core.desktop_intent import parse as parse_desktop_command
 from core.config import load_config, save_config
 from core.conversation import delete_history, recent_messages
@@ -669,47 +670,68 @@ class ApiKeyDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("JARVIS // GEMINI SETUP")
-        self.setModal(True); self.resize(590, 430); self.setMinimumWidth(540)
+        self.setModal(True); self.resize(640, 540); self.setMinimumWidth(580)
         self.thread = None; self.worker = None; self.pending_key = ""
         layout = QVBoxLayout(self); layout.setContentsMargins(28, 26, 28, 26); layout.setSpacing(14)
-        title = QLabel("CONNECT GEMINI"); title.setObjectName("section"); layout.addWidget(title)
+        title = QLabel("GEMINI REGISTRATION"); title.setObjectName("section"); layout.addWidget(title)
         intro = QLabel(
-            "JARVIS uses one free Gemini API key for chat and voice. Create it in Google AI Studio, "
-            "copy it, then paste it below. It will be tested before Windows Credential Manager stores it."
+            "Connect a free Google Gemini API key for chat, research and natural Desktop Control. "
+            "Your key is stored only in Windows Credential Manager."
         )
         intro.setWordWrap(True); layout.addWidget(intro)
-        open_studio = QPushButton("1  OPEN GOOGLE AI STUDIO")
+        steps = QLabel(
+            "1  Sign in to Google AI Studio and select Create API key.\n"
+            "2  Copy the key beginning with AIza and return to JARVIS.\n"
+            "3  Paste it below, then let JARVIS test and store it securely."
+        )
+        steps.setObjectName("dataCard"); steps.setWordWrap(True); steps.setMargin(12); layout.addWidget(steps)
+        open_studio = QPushButton("1  CREATE OR MANAGE GEMINI KEY")
         open_studio.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://aistudio.google.com/app/apikey")))
         layout.addWidget(open_studio)
         key_row = QHBoxLayout()
         self.key = QLineEdit(); self.key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.key.setPlaceholderText("Paste the Gemini API key here")
+        self.key.setPlaceholderText("2  Paste AIza… key here")
         self.key.setClearButtonEnabled(True); self.key.returnPressed.connect(self._test)
-        paste = QPushButton("PASTE"); paste.clicked.connect(self._paste)
+        self.key.textChanged.connect(self._key_changed)
+        paste = QPushButton("PASTE KEY"); paste.clicked.connect(self._paste)
         key_row.addWidget(self.key, 1); key_row.addWidget(paste); layout.addLayout(key_row)
         show = QCheckBox("Show key while typing"); show.toggled.connect(
             lambda visible: self.key.setEchoMode(QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password))
         layout.addWidget(show)
+        self.format_status = QLabel("○ Waiting for a key")
+        self.format_status.setObjectName("hint"); layout.addWidget(self.format_status)
         self.status = QLabel("● A key is already stored securely" if get_secret("gemini_api_key") else "○ No Gemini key stored")
         self.status.setObjectName("keyStatus"); self.status.setWordWrap(True); layout.addWidget(self.status)
         layout.addStretch()
         row = QHBoxLayout()
-        remove = QPushButton("REMOVE STORED KEY"); remove.setEnabled(bool(get_secret("gemini_api_key")))
-        remove.clicked.connect(self._remove)
-        self.test_button = QPushButton("2  TEST AND SAVE KEY"); self.test_button.setObjectName("primary")
+        self.remove_button = QPushButton("REMOVE STORED KEY")
+        self.remove_button.setEnabled(bool(get_secret("gemini_api_key")))
+        self.remove_button.clicked.connect(self._remove)
+        self.test_button = QPushButton(
+            "3  TEST STORED KEY" if get_secret("gemini_api_key") else "3  TEST AND SAVE KEY")
+        self.test_button.setObjectName("primary")
         self.test_button.clicked.connect(self._test)
-        self.save_button = QPushButton("SAVE SECURELY WITHOUT LIVE TEST")
+        self.save_button = QPushButton("SAVE NOW — VERIFY LATER")
         self.save_button.clicked.connect(self._save_without_test)
-        row.addWidget(remove); row.addStretch(); layout.addLayout(row)
+        row.addWidget(self.remove_button); row.addStretch(); layout.addLayout(row)
         connect_row = QHBoxLayout(); connect_row.addWidget(self.save_button); connect_row.addWidget(self.test_button)
         layout.addLayout(connect_row)
 
     def _paste(self):
         value = QApplication.clipboard().text().strip()
         if value:
-            self.key.setText(value); self.status.setText("○ Key pasted — test it to continue")
+            self.key.setText(normalize_gemini_key(value)); self.status.setText("○ Key pasted — test it to continue")
         else:
             self.status.setText("○ Clipboard has no text")
+
+    def _key_changed(self, value):
+        if not str(value).strip():
+            self.format_status.setText("○ Waiting for a key"); return
+        candidate = normalize_gemini_key(value)
+        self.format_status.setText(
+            "● Key format recognised — ready to test"
+            if valid_gemini_key_format(candidate) else
+            "○ This does not yet look like a complete Gemini AIza key")
 
     def _test(self):
         candidate = normalize_gemini_key(self.key.text()) or get_secret("gemini_api_key")
@@ -737,6 +759,7 @@ class ApiKeyDialog(QDialog):
         except Exception as exc:
             self._failed("Gemini connected, but secure storage failed: " + str(exc)); return
         self.key.clear(); self.status.setText("● " + str(message) + " Key stored securely.")
+        self.remove_button.setEnabled(True); self.test_button.setText("3  TEST STORED KEY")
         self.connected.emit(); QTimer.singleShot(500, self.accept)
 
     def _save_without_test(self):
@@ -749,6 +772,7 @@ class ApiKeyDialog(QDialog):
             self.status.setText("● Windows Credential Manager could not store the key."); return
         self.pending_key = candidate; self.key.clear()
         self.status.setText("● Key stored securely. Live Gemini connection has not been verified.")
+        self.remove_button.setEnabled(True); self.test_button.setText("3  TEST STORED KEY")
         self.connected.emit(); QTimer.singleShot(700, self.accept)
 
     def _failed(self, message):
@@ -758,12 +782,53 @@ class ApiKeyDialog(QDialog):
     def _remove(self):
         if QMessageBox.question(self, "Remove Gemini key?", "JARVIS chat and voice will stop until another key is added.") == QMessageBox.StandardButton.Yes:
             set_secret("gemini_api_key", ""); self.status.setText("○ Gemini key removed"); self.key.clear()
+            self.remove_button.setEnabled(False); self.test_button.setText("3  TEST AND SAVE KEY")
 
     def reject(self):
         if self.thread is not None and self.thread.isRunning():
             self.status.setText("● Please wait for the connection test to finish")
             return
         super().reject()
+
+
+class CapabilitiesDialog(QDialog):
+    def __init__(self, registry, parent=None):
+        super().__init__(parent); self.registry = registry
+        self.setWindowTitle("JARVIS V6 // CAPABILITIES")
+        self.resize(760, 620)
+        layout = QVBoxLayout(self)
+        title = QLabel("SYSTEM CAPABILITIES"); title.setObjectName("section"); layout.addWidget(title)
+        info = QLabel(
+            "This screen reports what is working now, what needs setup, and what remains a future feature."
+        )
+        info.setWordWrap(True); layout.addWidget(info)
+        self.list = QListWidget(); layout.addWidget(self.list, 1)
+        row = QHBoxLayout()
+        gemini = QPushButton("GEMINI REGISTRATION")
+        gemini.clicked.connect(lambda: parent.open_api_key_setup() if parent else None)
+        desktop = QPushButton("START DESKTOP CONTROL"); desktop.setObjectName("primary")
+        desktop.clicked.connect(lambda: (self.accept(), parent._handle_desktop_mode_command('/desktop control')) if parent else None)
+        close = QPushButton("CLOSE"); close.clicked.connect(self.accept)
+        row.addWidget(gemini); row.addWidget(desktop); row.addStretch(); row.addWidget(close); layout.addLayout(row)
+        self.refresh()
+
+    def refresh(self):
+        self.list.clear()
+        labels = {
+            "local_core": "Local Core", "gemini": "Gemini Connection", "fast_chat": "Fast Chat",
+            "deep_research": "Deep Research", "memory": "Encrypted Memory", "voice_input": "Voice Capture",
+            "cinematic_voice": "Neural British Voice", "desktop_control": "Desktop Control",
+            "natural_desktop": "Natural Desktop Mode", "appearance": "Appearance Studio",
+            "workspaces": "Life Workspaces", "weather": "Live Weather",
+            "recovery_backup": "Recovery & Backup", "companion_transport": "Companion Transport",
+            "iphone_interface": "iPhone Interface", "remote_relay": "Remote Relay",
+            "provider_plugins": "Provider Plugins",
+        }
+        for capability in capability_snapshot(self.registry):
+            state = capability["state"]
+            icon = "●" if state in ("ready", "configured", "enabled") else "◐" if state in ("setup_required", "foundation") else "○"
+            label = labels.get(capability["id"], capability["id"].replace("_", " ").title())
+            self.list.addItem(f"{icon}  {label}  /  {state.upper()}\n     {capability['detail']}")
 
 
 class SettingsDialog(QDialog):
@@ -1306,6 +1371,7 @@ class MainWindow(QMainWindow):
         self.retired_listeners = []
         self._desktop_refresh_pending = False
         self._desktop_pending = False
+        self.desktop_conversation_mode = False
         self._recovery_pending = False
         self._last_recovery_state = None
         self.chat_mode = "auto"
@@ -1360,6 +1426,7 @@ class MainWindow(QMainWindow):
         rail_layout.addStretch()
         manager = QPushButton("MANAGER"); manager.setObjectName("railButton"); manager.clicked.connect(self.open_manager_prompt); rail_layout.addWidget(manager)
         tools = QPushButton("COMMANDS"); tools.setObjectName("railButton"); tools.clicked.connect(self.open_command_palette); rail_layout.addWidget(tools)
+        capabilities = QPushButton("CAPABILITIES"); capabilities.setObjectName("railButton"); capabilities.clicked.connect(self.open_capabilities); rail_layout.addWidget(capabilities)
         settings = QPushButton("SETTINGS"); settings.setObjectName("railButton"); settings.clicked.connect(self.open_settings); rail_layout.addWidget(settings)
         about = QPushButton("ABOUT"); about.setObjectName("railButton"); about.clicked.connect(self.open_about); rail_layout.addWidget(about)
         body.addWidget(rail)
@@ -1437,8 +1504,10 @@ class MainWindow(QMainWindow):
         page = QWidget(); layout = QVBoxLayout(page)
         layout.setContentsMargins(22, 20, 22, 22); layout.setSpacing(12)
         title = QHBoxLayout(); label = QLabel("DESKTOP CONTROL"); label.setObjectName("section")
+        self.desktop_command_state = QLabel("○ COMMAND MODE OFF"); self.desktop_command_state.setObjectName("engine")
         self.desktop_state = QLabel("● OBSERVATION ACTIVE"); self.desktop_state.setObjectName("online")
-        title.addWidget(label); title.addStretch(); title.addWidget(self.desktop_state); layout.addLayout(title)
+        title.addWidget(label); title.addStretch(); title.addWidget(self.desktop_command_state)
+        title.addWidget(self.desktop_state); layout.addLayout(title)
         context_card = QFrame(); context_card.setObjectName("dataCard"); context_layout = QVBoxLayout(context_card)
         self.screen_context = QLabel("Reading active window…"); self.screen_context.setWordWrap(True)
         self.screen_context.setObjectName("dataValue"); context_layout.addWidget(QLabel("LIVE SCREEN CONTEXT"))
@@ -1600,7 +1669,7 @@ class MainWindow(QMainWindow):
 
     def _gemini_ready(self, _message):
         self.append("JARVIS", "Ready. Type a message or speak naturally.")
-        self.status.setText("● READY")
+        self.status.setText("● DESKTOP CONTROL READY" if self.desktop_conversation_mode else "● READY")
         self._sync_always_listener()
         cfg = load_config()
         if plugin_enabled("weather"):
@@ -1658,6 +1727,9 @@ class MainWindow(QMainWindow):
         text = self.input.text().strip()
         if not text: return
         self.input.clear(); self.append("YOU", text)
+        if self._handle_desktop_mode_command(text): return
+        if self.desktop_conversation_mode:
+            self._handle_desktop_goal(text); return
         handled, result = handle_memory_command(text)
         if handled:
             if result == "__CONFIRM_DELETE_ALL_MEMORY__":
@@ -1850,7 +1922,11 @@ class MainWindow(QMainWindow):
         natural = voice_cfg.get("activation_mode", "natural") == "natural"
         self._pending_wake_required = not natural and time.monotonic() >= self.voice_session.until
         engine = voice_cfg.get("input_engine", "fast_free")
-        if engine == "gemini" and not get_secret("gemini_api_key"):
+        if self.desktop_conversation_mode and engine == "gemini":
+            # One transcription followed by one structured planning request is
+            # quicker and prevents a discarded conversational answer.
+            engine = "fast_free"
+        elif engine == "gemini" and not get_secret("gemini_api_key"):
             engine = "fast_free"
         if engine in ("fast_free", "offline"):
             self.status.setText("● FAST SPEECH RECOGNITION" if engine == "fast_free" else "● PRIVATE OFFLINE RECOGNITION")
@@ -1922,6 +1998,9 @@ class MainWindow(QMainWindow):
         if not transcript:
             self._sync_always_listener(); return
         self.append("YOU", transcript)
+        if self._handle_desktop_mode_command(transcript): return
+        if self.desktop_conversation_mode:
+            self._handle_desktop_goal(transcript); return
         handled, memory_result = handle_memory_command(transcript)
         if handled:
             if memory_result == "__CONFIRM_DELETE_ALL_MEMORY__":
@@ -1973,7 +2052,8 @@ class MainWindow(QMainWindow):
             "Application Permissions": self.open_permissions, "System Diagnostics": self.open_diagnostics,
             "Performance Monitor": self.open_performance, "Sensitive Activity": self.open_activity,
             "Encrypted Backup": self.open_backup, "Memory": self.open_memory,
-            "Manager Prompt": self.open_manager_prompt, "Settings": self.open_settings,
+            "Manager Prompt": self.open_manager_prompt, "Capabilities": self.open_capabilities,
+            "Gemini Registration": self.open_api_key_setup, "Settings": self.open_settings,
         }
         CommandPalette(actions, self).exec()
 
@@ -1983,6 +2063,7 @@ class MainWindow(QMainWindow):
     def open_performance(self): PerformanceDialog(self).exec()
     def open_activity(self): ActivityDialog(self).exec()
     def open_backup(self): BackupDialog(self).exec()
+    def open_capabilities(self): CapabilitiesDialog(self.registry, self).exec()
 
     def _settings_saved(self):
         cfg = load_config()
@@ -2033,6 +2114,78 @@ class MainWindow(QMainWindow):
             return
         dialog = TaskStudio(self.registry, self); dialog.run_plan.connect(self.review_task); dialog.exec()
 
+    def _handle_desktop_mode_command(self, text):
+        command = " ".join(str(text).casefold().strip().split()).rstrip(".!?")
+        start_commands = {"/desktop control", "/desktop", "start desktop control"}
+        stop_commands = {"/desktop off", "/desktop control off", "exit desktop control",
+                         "stop desktop control", "leave desktop control"}
+        if command in start_commands:
+            cfg = load_config()
+            if not cfg["desktop"].get("enabled") or not plugin_enabled("desktop"):
+                self.append("SYSTEM", "Desktop Control is disabled. Enable its plugin first.")
+                self.status.setText("● DESKTOP CONTROL DISABLED")
+                QTimer.singleShot(400, self._sync_always_listener)
+                return True
+            self.desktop_conversation_mode = True
+            self.workspace_stack.setCurrentWidget(self.desktop_page)
+            self.desktop_command_state.setText("● NATURAL COMMAND MODE")
+            self.desktop_mission.setText("WAITING FOR YOUR INSTRUCTION")
+            self.desktop_step.setText("Speak naturally or type what you want JARVIS to do.")
+            self.input.setPlaceholderText("Desktop Control — describe the task naturally…")
+            self.status.setText("● DESKTOP CONTROL READY")
+            self.append("JARVIS", "Desktop Control is active. Tell me the task naturally.")
+            self.reactor.set_state("ONLINE")
+            QTimer.singleShot(250, self._sync_always_listener)
+            return True
+        if command in stop_commands and self.desktop_conversation_mode:
+            self.desktop_conversation_mode = False
+            self._desktop_pending = False
+            self.desktop_command_state.setText("○ COMMAND MODE OFF")
+            self.desktop_mission.setText("NO MISSION RUNNING")
+            self.desktop_step.setText("Desktop Control conversation ended.")
+            self.set_chat_mode(self.chat_mode)
+            self.append("JARVIS", "Desktop Control is off. Normal conversation is active.")
+            self.reactor.set_state("ONLINE")
+            QTimer.singleShot(250, self._sync_always_listener)
+            return True
+        return False
+
+    def _handle_desktop_goal(self, text):
+        parsed = parse_desktop_command(text)
+        if parsed:
+            self.review_task(*parsed)
+            return
+        if not get_secret("gemini_api_key"):
+            self.append("SYSTEM", "Natural multi-step planning needs Gemini. Connect it in Settings, "
+                        "or use commands such as 'open Calculator' and 'volume down'.")
+            self.status.setText("● GEMINI REQUIRED FOR PLANNING")
+            QTimer.singleShot(500, self._sync_always_listener)
+            return
+        self._stop_always_listener()
+        self.desktop_mission.setText(str(text).strip().upper()[:120])
+        self.desktop_step.setText("COMPILING AN ALLOWLISTED PLAN")
+        self.status.setText("● PLANNING DESKTOP MISSION")
+        self.reactor.set_state("THINKING")
+        self._task(self.client.plan_desktop, (str(text), self.registry),
+                   self._desktop_plan_ready, self._desktop_plan_failed)
+
+    def _desktop_plan_ready(self, result):
+        goal, plan = result
+        self.review_task(goal, plan)
+
+    def _desktop_plan_failed(self, error):
+        message = str(error)
+        if message.startswith("CLARIFY:"):
+            self.append("JARVIS", message.removeprefix("CLARIFY:").strip())
+            self.desktop_step.setText("MORE INFORMATION NEEDED")
+            self.status.setText("● DESKTOP CONTROL READY")
+        else:
+            self.append("SYSTEM", message)
+            self.desktop_step.setText("PLAN COULD NOT BE CREATED")
+            self.status.setText("● DESKTOP PLANNING ERROR")
+        self.reactor.set_state("ONLINE")
+        QTimer.singleShot(400, self._sync_always_listener)
+
     def _try_desktop_command(self, text):
         parsed = parse_desktop_command(text)
         cfg = load_config()
@@ -2047,7 +2200,9 @@ class MainWindow(QMainWindow):
             reviewed = build_execution_plan(goal, plan, self.registry,
                                             load_config()["desktop"].get("max_steps", 20))
         except ValueError as exc:
-            QMessageBox.warning(self, "Plan rejected", str(exc)); return
+            QMessageBox.warning(self, "Plan rejected", str(exc))
+            self.reactor.set_state("ONLINE"); self.status.setText("● DESKTOP CONTROL READY")
+            QTimer.singleShot(400, self._sync_always_listener); return
         summary = "\n".join(
             f"{i}. {step.label}: {step.value[:120]}" for i, step in enumerate(reviewed.steps, 1))
         approval_required = reviewed.requires_approval
@@ -2062,7 +2217,9 @@ class MainWindow(QMainWindow):
                 reviewed.goal + "\n\n" + summary + "\n\n" + reason +
                 " After approval you have 3 seconds to focus the target window.")
             if answer != QMessageBox.StandardButton.Yes:
-                self.append("SYSTEM", "Desktop plan cancelled before execution."); return
+                self.append("SYSTEM", "Desktop plan cancelled before execution.")
+                self.reactor.set_state("ONLINE"); self.status.setText("● DESKTOP CONTROL READY")
+                QTimer.singleShot(300, self._sync_always_listener); return
             delay = 3000
             self.append("SYSTEM", "Desktop plan approved. Execution begins in 3 seconds.")
         else:
@@ -2100,15 +2257,19 @@ class MainWindow(QMainWindow):
         self.desktop_progress.setValue(self.desktop_progress.maximum())
         self.desktop_step.setText("MISSION COMPLETED")
         self.append("JARVIS", "Desktop mission completed:\n" + "\n".join(results)); self.reactor.set_state("ONLINE")
-        self.status.setText("● READY")
+        self.status.setText("● DESKTOP CONTROL READY" if self.desktop_conversation_mode else "● READY")
         self._refresh_desktop_context()
+        QTimer.singleShot(350, self._sync_always_listener)
 
     def _desktop_task_failed(self, error):
         cancelled = "cancel" in str(error).casefold()
         self.desktop_step.setText("MISSION CANCELLED" if cancelled else "MISSION FAILED — CHECK CHAT")
         self.append("SYSTEM", str(error)); self.reactor.set_state("ONLINE" if cancelled else "ERROR")
-        self.status.setText("● READY" if cancelled else "● DESKTOP ERROR")
+        self.status.setText(
+            "● DESKTOP CONTROL READY" if cancelled and self.desktop_conversation_mode
+            else "● READY" if cancelled else "● DESKTOP ERROR")
         self._refresh_desktop_context()
+        QTimer.singleShot(350, self._sync_always_listener)
 
     def stop_task(self):
         self._desktop_pending = False; self.task_executor.cancel()

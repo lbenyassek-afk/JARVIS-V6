@@ -31,6 +31,13 @@ memory, credentials, executable, installer, update channel and prerelease track.
   step reordering, live progress, emergency cancellation and encrypted action history.
 - Fast typed or spoken desktop commands for approved apps, window switching, desktop,
   volume, media, scrolling and screenshots, routed through the same permission system.
+- `/desktop control` starts a session-only natural command mode. Multi-step spoken or
+  typed goals are compiled by Gemini into structured steps and validated against the
+  local action/value allowlist before approval or execution. `/desktop off` exits.
+- Guided Gemini registration with live key-format feedback, stored-key retesting,
+  explicit test/save states and Windows Credential Manager storage.
+- A full Capabilities screen reports ready, setup-required, disabled and future
+  components without presenting unfinished integrations as working features.
 - Thirteen bounded desktop actions including approved applications, Unicode text,
   clipboard, fixed shortcuts, navigation keys, pointer actions, scrolling, media,
   screenshots and waits. Sensitive actions still require explicit approval.

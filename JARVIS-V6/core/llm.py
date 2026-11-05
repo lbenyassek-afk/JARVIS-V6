@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import re
 import wave
 
@@ -13,6 +14,7 @@ from .prompt import system_messages
 from .secrets import get_secret
 from .providers import select as select_provider
 from .metrics import measure
+from .tasks import Step
 
 
 class LLMError(RuntimeError):
@@ -206,6 +208,80 @@ class LLMClient:
             answer = self._gemini(messages, cfg, mode)
         self.record_exchange(user_text, answer)
         return answer
+
+    def plan_desktop(self, goal: str, registry) -> tuple[str, list[Step]]:
+        """Convert a natural goal into a strictly allowlisted desktop plan."""
+        key = get_secret("gemini_api_key")
+        if not key:
+            raise LLMError("Connect Gemini before using natural Desktop Control planning.")
+        actions = []
+        for action in registry.actions.values():
+            item = {"name": action.name, "description": action.description}
+            if action.values:
+                item["allowed_values"] = list(action.values)
+            actions.append(item)
+        instruction = (
+            "You are a desktop plan compiler. Convert the user's goal into the smallest reliable "
+            "sequence using only the supplied actions. Never invent an action, executable, URL, "
+            "shell command or value outside allowed_values. Add a short wait after opening an app "
+            "when a later step needs that app ready. Coordinates must be explicit x,y values; if "
+            "coordinates or another required fact are missing, return needs_clarification with one "
+            "short question and no steps. Return JSON only."
+        )
+        schema = {
+            "type": "OBJECT",
+            "properties": {
+                "goal": {"type": "STRING"},
+                "needs_clarification": {"type": "BOOLEAN"},
+                "question": {"type": "STRING"},
+                "steps": {"type": "ARRAY", "maxItems": 20, "items": {
+                    "type": "OBJECT",
+                    "properties": {"action": {"type": "STRING"}, "value": {"type": "STRING"}},
+                    "required": ["action", "value"],
+                }},
+            },
+            "required": ["goal", "needs_clarification", "question", "steps"],
+        }
+        cfg = load_config(); model = _supported_model(cfg["llm"].get("fast_model", "gemini-3.5-flash-lite"))
+        payload = {
+            "system_instruction": {"parts": [{"text": instruction}]},
+            "contents": [{"role": "user", "parts": [{"text":
+                "AVAILABLE ACTIONS:\n" + json.dumps(actions, ensure_ascii=False) +
+                "\n\nUSER GOAL:\n" + str(goal)[:2000]}]}],
+            "generationConfig": {
+                "temperature": 0,
+                "maxOutputTokens": 900,
+                "responseMimeType": "application/json",
+                "responseSchema": schema,
+            },
+        }
+        try:
+            response = self._post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                params={"key": key}, json=payload, timeout=(8, 45),
+            )
+        except requests.Timeout as exc:
+            raise LLMError("Desktop planning timed out. Try a shorter instruction.") from exc
+        except requests.RequestException as exc:
+            raise LLMError("Desktop planning could not reach Gemini.") from exc
+        if response.status_code >= 400:
+            raise _gemini_rejection(response, "desktop planning")
+        try:
+            raw = "".join(
+                part.get("text", "")
+                for part in response.json()["candidates"][0]["content"]["parts"])
+            data = json.loads(raw)
+        except Exception as exc:
+            raise LLMError("Gemini returned an invalid desktop plan.") from exc
+        if data.get("needs_clarification"):
+            question = " ".join(str(data.get("question", "Please clarify the desktop task.")).split())
+            raise LLMError("CLARIFY: " + question[:300])
+        steps = [Step(str(item.get("action", "")), str(item.get("value", "")))
+                 for item in data.get("steps", []) if isinstance(item, dict)]
+        if not steps:
+            raise LLMError("Gemini could not create a desktop plan from that instruction.")
+        # The existing planner performs the final action/value allowlist check.
+        return (" ".join(str(data.get("goal") or goal).split())[:300], steps)
 
     def chat_audio(self, pcm_bytes: bytes, sample_rate: int, mode: str = "chat",
                    english_only: bool = True, require_wake: bool = False,
