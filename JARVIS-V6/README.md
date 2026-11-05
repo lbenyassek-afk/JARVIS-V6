@@ -20,7 +20,8 @@ memory, credentials, executable, installer, update channel and prerelease track.
 
 ## Alpha 1 foundation
 
-- Original V6 titanium-and-amber J-reactor icon with Windows sizes from 16 to 256 pixels.
+- Original V6 satin-titanium J-reactor icon with arctic-blue energy, transparent
+  edges and ten Windows sizes from 16 to 256 pixels.
 - Five persistent presence designs: Energy Orb, Reactor Core, HUD Face, Hybrid
   and Minimal Assistant, selectable directly from the main window or Settings.
 - Six coordinated minimal colour themes plus an optional custom accent. Theme

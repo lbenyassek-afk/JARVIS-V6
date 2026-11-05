@@ -2,7 +2,8 @@
 
 ## Implemented in Alpha 1
 
-- Original V6 application icon built around a recognizable J-reactor silhouette.
+- Original V6 application icon built around a bold titanium J-reactor silhouette,
+  packaged at ten Windows sizes for shortcuts, taskbar and installer.
 - Minimal presence panel with saved Energy Orb, Reactor Core, HUD Face, Hybrid
   and Minimal Assistant designs selectable from Home or Settings.
 - Coordinated appearance studio with six minimal themes, validated custom accent

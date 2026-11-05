@@ -14,7 +14,7 @@ class V6Tests(unittest.TestCase):
         icon = Path(__file__).resolve().parent.parent / "jarvis.ico"
         raw = icon.read_bytes()
         self.assertEqual(raw[:4], b"\x00\x00\x01\x00")
-        self.assertGreaterEqual(int.from_bytes(raw[4:6], "little"), 8)
+        self.assertGreaterEqual(int.from_bytes(raw[4:6], "little"), 10)
 
     def test_companion_requires_auth_and_only_queues_commands(self):
         server = CompanionServer("127.0.0.1", 0, "test-companion-token")
