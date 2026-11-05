@@ -15,6 +15,8 @@ from core.desktop_intent import parse as parse_desktop_command
 from core.windows_automation import split_target_text, validate_control_name, validate_target_text
 from core.voice import _spoken_text
 from core.speech import transcribe_fast_free, transcribe_offline
+from core.language import detect_language, speech_locale, voice_for_text
+from core.retrieval import relevance
 
 
 class CoreTests(unittest.TestCase):
@@ -123,10 +125,11 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(generation["responseMimeType"], "application/json")
         self.assertEqual(generation["temperature"], 0)
 
-    def test_voice_defaults_are_always_listening_english_and_selectable(self):
+    def test_voice_defaults_are_always_listening_multilingual_and_selectable(self):
         voice = config.load_config()["voice"]
         self.assertTrue(voice["always_listening"])
-        self.assertTrue(voice["english_only"])
+        self.assertFalse(voice["english_only"])
+        self.assertEqual(config.load_config()["assistant"]["language"], "auto")
         self.assertEqual(voice["input_device"], "")
         self.assertEqual(voice["british_voice"], "en-GB-ThomasNeural")
         self.assertEqual(voice["end_silence_ms"], 500)
@@ -177,6 +180,25 @@ class CoreTests(unittest.TestCase):
             text = transcribe_fast_free(b"\x00\x00" * 400, 16_000)
         self.assertEqual(text, "plan my day naturally")
 
+    def test_multilingual_language_voice_and_speech_routing(self):
+        self.assertEqual(detect_language("Bonjour, comment peux-tu m'aider ?"), "fr")
+        self.assertEqual(detect_language("كيف يمكنني تنظيم مشروعي؟"), "ar")
+        self.assertEqual(speech_locale("es"), "es-ES")
+        self.assertEqual(voice_for_text("Bonjour à tous", "en-GB-ThomasNeural", "auto"),
+                         "fr-FR-HenriNeural")
+        class Recognizer:
+            locale = ""
+            def recognize_google(self, audio, language):
+                Recognizer.locale = language
+                return "bonjour jarvis"
+        fake = SimpleNamespace(
+            Recognizer=Recognizer, AudioData=lambda pcm, rate, width: (pcm, rate, width),
+            UnknownValueError=ValueError, RequestError=ConnectionError,
+        )
+        with patch.dict(sys.modules, {"speech_recognition": fake}):
+            self.assertEqual(transcribe_fast_free(b"\x00\x00" * 400, 16_000, "fr"), "bonjour jarvis")
+        self.assertEqual(Recognizer.locale, "fr-FR")
+
     def test_spoken_reply_removes_long_punctuation_pauses(self):
         spoken = _spoken_text("Good morning, Reda. The system is ready... Shall we begin?")
         self.assertNotRegex(spoken, r"[,;:…]")
@@ -187,6 +209,10 @@ class CoreTests(unittest.TestCase):
                          "Hello, Reda. How can I help?")
         self.assertTrue(is_weather_query("What's the weather report?"))
         self.assertEqual(requested_location("Weather in London?"), "London")
+        self.assertEqual(quick_reply("Hola Jarvis", "JARVIS", "Reda", "es"),
+                         "Hola, Reda. ¿Cómo puedo ayudarte?")
+        self.assertTrue(is_weather_query("Quelle est la météo demain ?"))
+        self.assertEqual(requested_location("Météo à Paris ?"), "Paris")
 
     def test_live_weather_report_uses_configured_location(self):
         payload = {
@@ -202,9 +228,12 @@ class CoreTests(unittest.TestCase):
              patch("core.weather._coordinates", return_value=(34.02, -6.84, "Rabat, Morocco")), \
              patch("core.weather._json", return_value=payload):
             result = weather.report()
+            french = weather.report("", "fr")
         self.assertIn("Rabat, Morocco", result)
         self.assertIn("18°C", result)
         self.assertIn("partly cloudy", result)
+        self.assertIn("À Rabat, Morocco", french)
+        self.assertIn("partiellement nuageux", french)
 
     def test_legacy_integration_and_model_settings_do_not_return(self):
         config.CONFIG_PATH.write_text(
@@ -236,6 +265,26 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(route_mode("Write a short welcome message"), "chat")
         self.assertEqual(route_mode("What is the latest Gemini news today?"), "deep_search")
         self.assertEqual(route_mode("Analyse the risks and help me decide"), "reflection")
+        self.assertEqual(route_mode("Quelles sont les dernières actualités avec des sources ?"), "deep_search")
+        self.assertEqual(route_mode("حلل المخاطر وساعدني في اتخاذ قرار"), "reflection")
+
+    def test_intelligence_profiles_change_reasoning_and_answer_budget(self):
+        response = unittest.mock.Mock(status_code=200)
+        response.json.return_value = {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+        client = LLMClient(); messages = [{"role": "user", "content": "Analyse this plan"}]
+        thorough = config.load_config()
+        thorough["assistant"].update({"intelligence_profile": "thorough", "response_length": "detailed"})
+        with patch("core.llm.get_secret", return_value="AIza-test"), \
+             patch.object(client.session, "post", return_value=response) as post:
+            client._gemini(messages, thorough, "reflection")
+        generation = post.call_args.kwargs["json"]["generationConfig"]
+        self.assertEqual(generation["thinkingConfig"]["thinkingBudget"], 3072)
+        self.assertGreaterEqual(generation["maxOutputTokens"], 1800)
+
+    def test_multilingual_retrieval_handles_unicode_and_diacritics(self):
+        self.assertGreater(relevance("strategie commerciale", "Notre stratégie commerciale pour demain"), 0)
+        memory.remember("projects", "école", "Préparer le contrôle de mathématiques")
+        self.assertEqual(memory.search("preparer mathematiques")[0]["key"], "école")
 
     def test_voice_turn_uses_one_gemini_request_for_transcript_and_answer(self):
         response = unittest.mock.Mock(status_code=200)
@@ -324,6 +373,7 @@ class CoreTests(unittest.TestCase):
         self.assertNotEqual(rows["desktop_control"]["state"], "future")
         self.assertEqual(rows["natural_desktop"]["state"], "setup_required")
         self.assertEqual(rows["memory"]["state"], "ready")
+        self.assertEqual(rows["multilingual"]["state"], "ready")
         with patch("core.capabilities.get_secret", return_value="AIza-test"):
             connected = {row["id"]: row for row in capabilities.snapshot(registry)}
         self.assertEqual(connected["deep_research"]["state"], "ready")

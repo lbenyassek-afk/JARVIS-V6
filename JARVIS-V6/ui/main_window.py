@@ -4,6 +4,7 @@ import math
 import queue
 import re
 import threading
+import html
 from datetime import datetime
 
 from PyQt6.QtCore import QObject, QPointF, QRectF, Qt, QThread, QTimer, QUrl, pyqtSignal
@@ -27,6 +28,7 @@ from core.conversation import delete_history, recent_messages
 from core.intent import is_weather_query, quick_reply, requested_location
 from core.local_core import respond as local_core_response
 from core.llm import LLMClient, normalize_gemini_key, route_mode, valid_gemini_key_format, validate_gemini_key
+from core.language import LANGUAGES, response_language
 from core.session import VoiceSession
 from core.workspace import save as save_record
 from core.windows_automation import active_controls, split_target_text
@@ -818,8 +820,9 @@ class CapabilitiesDialog(QDialog):
         self.list.clear()
         labels = {
             "local_core": "Local Core", "gemini": "Gemini Connection", "fast_chat": "Fast Chat",
-            "deep_research": "Deep Research", "memory": "Encrypted Memory", "voice_input": "Voice Capture",
-            "cinematic_voice": "Neural British Voice", "desktop_control": "Desktop Control",
+            "deep_research": "Deep Research", "multilingual": "Multilingual Intelligence",
+            "memory": "Encrypted Memory", "voice_input": "Voice Capture",
+            "cinematic_voice": "Multilingual Neural Voice", "desktop_control": "Desktop Control",
             "natural_desktop": "Natural Desktop Mode", "appearance": "Appearance Studio",
             "app_aware_desktop": "App-Aware Desktop", "desktop_routines": "Desktop Routines",
             "workspaces": "Life Workspaces", "weather": "Live Weather",
@@ -847,6 +850,22 @@ class SettingsDialog(QDialog):
         scroll.setWidget(content); layout.addWidget(scroll)
         self.name = QLineEdit(cfg["assistant"]["name"])
         self.user = QLineEdit(cfg["assistant"]["user_name"])
+        self.language = QComboBox()
+        for code, profile in LANGUAGES.items(): self.language.addItem(profile["label"], code)
+        self.language.setCurrentIndex(max(0, self.language.findData(cfg["assistant"].get("language", "auto"))))
+        self.tone = QComboBox()
+        for label, value in (("Warm and calm", "warm_calm"), ("Direct and professional", "professional"),
+                             ("Friendly and casual", "friendly"), ("Precise and technical", "technical")):
+            self.tone.addItem(label, value)
+        self.tone.setCurrentIndex(max(0, self.tone.findData(cfg["assistant"].get("tone", "warm_calm"))))
+        self.response_length = QComboBox()
+        for label, value in (("Concise", "concise"), ("Balanced", "balanced"), ("Detailed", "detailed")):
+            self.response_length.addItem(label, value)
+        self.response_length.setCurrentIndex(max(0, self.response_length.findData(cfg["assistant"].get("response_length", "balanced"))))
+        self.intelligence = QComboBox()
+        for label, value in (("Adaptive — recommended", "adaptive"), ("Fast", "fast"), ("Thorough", "thorough")):
+            self.intelligence.addItem(label, value)
+        self.intelligence.setCurrentIndex(max(0, self.intelligence.findData(cfg["assistant"].get("intelligence_profile", "adaptive"))))
         self.provider = QLabel("Adaptive router — Gemini active")
         self.gemini_models = QLabel("Fast / research / reflection routing")
         self.key_status = QLabel("● Key saved securely" if get_secret("gemini_api_key") else "○ Gemini key required")
@@ -854,9 +873,9 @@ class SettingsDialog(QDialog):
         self.manage_key = QPushButton("OPEN GEMINI KEY SETUP"); self.manage_key.clicked.connect(self._manage_key)
         self.speak = QCheckBox(); self.speak.setChecked(cfg["voice"]["speak_replies"])
         self.input_engine = QComboBox()
-        self.input_engine.addItem("Fast online English — free, no API key", "fast_free")
+        self.input_engine.addItem("Fast multilingual — selected language; Auto uses English", "fast_free")
         self.input_engine.addItem("Private offline English — basic accuracy", "offline")
-        self.input_engine.addItem("Gemini audio — higher accuracy, uses quota", "gemini")
+        self.input_engine.addItem("Gemini audio — automatic multilingual, uses quota", "gemini")
         self.input_engine.setCurrentIndex(max(0, self.input_engine.findData(cfg["voice"].get("input_engine", "fast_free"))))
         self.activation_mode = QComboBox()
         self.activation_mode.addItem("Natural conversation — no wake phrase", "natural")
@@ -871,7 +890,7 @@ class SettingsDialog(QDialog):
         self.voice_preview = QPushButton("PREVIEW CINEMATIC VOICE")
         self.voice_preview.clicked.connect(self._preview_voice)
         self.always_listening = QCheckBox(); self.always_listening.setChecked(cfg["voice"].get("always_listening", True))
-        self.english_only = QCheckBox(); self.english_only.setChecked(cfg["voice"].get("english_only", True))
+        self.english_only = QCheckBox(); self.english_only.setChecked(cfg["voice"].get("english_only", False))
         self.english_only.setEnabled(self.input_engine.currentData() == "gemini")
         self.input_engine.currentIndexChanged.connect(
             lambda: self.english_only.setEnabled(self.input_engine.currentData() == "gemini"))
@@ -954,18 +973,20 @@ class SettingsDialog(QDialog):
         self.instructions.setMinimumHeight(110)
         for label, widget in (
             ("Assistant name", self.name), ("Your preferred name", self.user),
+            ("Language", self.language), ("Tone", self.tone),
+            ("Response length", self.response_length), ("Intelligence", self.intelligence),
             ("AI provider", self.provider), ("Gemini modes", self.gemini_models),
             ("Gemini connection", self.key_status), ("API key setup", self.manage_key),
             ("Speak replies", self.speak),
             ("Speech recognition", self.input_engine),
             ("Listening behaviour", self.activation_mode),
             ("Wake phrase", self.wake_phrase),
-            ("British voice", self.voice),
+            ("Neural voice", self.voice),
             ("Voice preview", self.voice_preview),
             ("Always-listening microphone", self.always_listening),
             ("Microphone", self.microphone), ("Microphone check", self.mic_test),
             ("Wait after speech", self.end_silence),
-            ("English commands only", self.english_only),
+            ("Restrict Gemini voice to English", self.english_only),
             ("Voice speed", self.speech_rate), ("Voice pitch", self.speech_pitch),
             ("Voice volume", self.speech_volume),
             ("Serious mode", self.serious),
@@ -1022,6 +1043,10 @@ class SettingsDialog(QDialog):
             return
         cfg["assistant"]["name"] = self.name.text().strip() or "JARVIS"
         cfg["assistant"]["user_name"] = self.user.text().strip()
+        cfg["assistant"]["language"] = self.language.currentData()
+        cfg["assistant"]["tone"] = self.tone.currentData()
+        cfg["assistant"]["response_length"] = self.response_length.currentData()
+        cfg["assistant"]["intelligence_profile"] = self.intelligence.currentData()
         cfg["llm"]["provider"] = "gemini"
         cfg["voice"]["speak_replies"] = self.speak.isChecked()
         cfg["voice"]["input_engine"] = self.input_engine.currentData()
@@ -1088,7 +1113,8 @@ class SettingsDialog(QDialog):
         self.preview_thread = QThread(self)
         self.preview_worker = Task(
             synthesize, "Good evening, Reda. All systems are online. How may I assist you?",
-            self.voice.currentData(), self.speech_rate.value(), self.speech_pitch.value())
+            self.voice.currentData(), self.speech_rate.value(), self.speech_pitch.value(),
+            self.language.currentData())
         self.preview_worker.moveToThread(self.preview_thread)
         self.preview_thread.started.connect(self.preview_worker.run)
         self.preview_worker.done.connect(self._preview_ready)
@@ -1541,7 +1567,8 @@ class MainWindow(QMainWindow):
         self.mode_selector.currentIndexChanged.connect(lambda: self.set_chat_mode(str(self.mode_selector.currentData())))
         title_row.addWidget(workspace_title); title_row.addStretch(); title_row.addWidget(self.mode_selector)
         rv.addLayout(title_row)
-        self.chat = QTextEdit(); self.chat.setReadOnly(True); self.chat.setObjectName("chat"); rv.addWidget(self.chat, 1)
+        self.chat = QTextEdit(); self.chat.setReadOnly(True); self.chat.setOpenExternalLinks(True)
+        self.chat.setObjectName("chat"); rv.addWidget(self.chat, 1)
         input_row = QHBoxLayout(); input_row.setSpacing(10)
         self.input = QLineEdit(); self.input.setPlaceholderText("Ask JARVIS anything…"); self.input.setMinimumHeight(50)
         self.input.returnPressed.connect(self.send)
@@ -1790,12 +1817,14 @@ class MainWindow(QMainWindow):
         if cfg.get("updates", {}).get("automatic_check", True):
             self._task(check_for_updates, (), self._update_checked, lambda _error: None)
         self._offer_first_run_diagnostics()
-        greeting = quick_reply("hi jarvis", cfg["assistant"]["name"], cfg["assistant"].get("user_name", ""))
+        greeting = quick_reply("hi jarvis", cfg["assistant"]["name"], cfg["assistant"].get("user_name", ""),
+                               cfg["assistant"].get("language", "auto"))
         if cfg["voice"].get("speak_replies") and greeting:
             self._task(
                 synthesize,
                 (greeting, cfg["voice"].get("british_voice", "en-GB-ThomasNeural"),
-                 cfg["voice"].get("speech_rate", 0), cfg["voice"].get("speech_pitch", 0)),
+                 cfg["voice"].get("speech_rate", 0), cfg["voice"].get("speech_pitch", 0),
+                 cfg["assistant"].get("language", "auto")),
                 lambda _path: None, lambda _error: None,
             )
 
@@ -1818,7 +1847,17 @@ class MainWindow(QMainWindow):
 
     def append(self, speaker: str, text: str):
         color = "#FFB547" if speaker == "JARVIS" else "#FFE0A3" if speaker == "YOU" else "#9B876C"
-        safe = str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+        parts = re.split(r"(https?://[^\s<>]+)", str(text))
+        rendered = []
+        for part in parts:
+            if part.startswith(("http://", "https://")):
+                url = part.rstrip(".,;)")
+                suffix = part[len(url):]
+                escaped = html.escape(url, quote=True)
+                rendered.append(f'<a href="{escaped}" style="color:#65C7FF">{escaped}</a>' + html.escape(suffix))
+            else:
+                rendered.append(html.escape(part))
+        safe = "".join(rendered).replace("\n", "<br>")
         self.chat.append(f'<div style="margin:8px 0"><b style="color:{color}">{speaker} //</b><br>{safe}</div>')
 
     def set_chat_mode(self, mode: str):
@@ -1852,7 +1891,8 @@ class MainWindow(QMainWindow):
             self.append("JARVIS", result); self.refresh_memory(); return
         if self._try_desktop_command(text): return
         cfg = load_config()
-        local = (quick_reply(text, cfg["assistant"]["name"], cfg["assistant"].get("user_name", ""))
+        local = (quick_reply(text, cfg["assistant"]["name"], cfg["assistant"].get("user_name", ""),
+                             cfg["assistant"].get("language", "auto"))
                  if cfg["assistant"].get("quick_local_replies", True) else None)
         local = local or local_core_response(text)
         if local:
@@ -1860,7 +1900,8 @@ class MainWindow(QMainWindow):
         if is_weather_query(text) and plugin_enabled("weather"):
             self._stop_always_listener(); self.reactor.set_state("THINKING")
             self.status.setText("● READING LIVE WEATHER")
-            self._task(weather_report, (requested_location(text),),
+            self._task(weather_report, (requested_location(text),
+                                        response_language(text, cfg["assistant"].get("language", "auto"))),
                        lambda answer: self._local_answer(text, answer)); return
         if not get_secret("gemini_api_key"):
             self.status.setText("● GEMINI SETUP REQUIRED")
@@ -1868,7 +1909,8 @@ class MainWindow(QMainWindow):
                 return
         self._stop_always_listener()
         self.reactor.set_state("THINKING")
-        self._active_mode = route_mode(text) if self.chat_mode == "auto" else self.chat_mode
+        self._active_mode = (route_mode(text, cfg["assistant"].get("intelligence_profile", "adaptive"))
+                             if self.chat_mode == "auto" else self.chat_mode)
         state = "DEEP SEARCHING" if self._active_mode == "deep_search" else "REFLECTING" if self._active_mode == "reflection" else "PROCESSING"
         self.status.setText("● " + state)
         self._task(self.client.chat, (text, self._active_mode), self._answer)
@@ -1886,7 +1928,9 @@ class MainWindow(QMainWindow):
             voice_cfg = load_config()["voice"]
             voice = voice_cfg.get("british_voice", "en-GB-ThomasNeural")
             self._task(synthesize, (str(answer), voice, voice_cfg.get("speech_rate", 0),
-                                    voice_cfg.get("speech_pitch", 0)), self._play_voice, self._voice_failed)
+                                    voice_cfg.get("speech_pitch", 0),
+                                    load_config()["assistant"].get("language", "auto")),
+                       self._play_voice, self._voice_failed)
         else:
             QTimer.singleShot(300, self._sync_always_listener)
 
@@ -2029,7 +2073,7 @@ class MainWindow(QMainWindow):
         self._stop_always_listener()
         self.mic.setText("◈ PROCESSING")
         self.reactor.set_state("THINKING")
-        english_only = bool(load_config()["voice"].get("english_only", True))
+        english_only = bool(load_config()["voice"].get("english_only", False))
         import time
         voice_cfg = load_config()["voice"]
         natural = voice_cfg.get("activation_mode", "natural") == "natural"
@@ -2045,7 +2089,7 @@ class MainWindow(QMainWindow):
             self.status.setText("● FAST SPEECH RECOGNITION" if engine == "fast_free" else "● PRIVATE OFFLINE RECOGNITION")
             self._task(
                 transcribe_fast_free if engine == "fast_free" else transcribe_offline,
-                (bytes(pcm), int(sample_rate)),
+                (bytes(pcm), int(sample_rate), load_config()["assistant"].get("language", "auto")),
                 self._offline_transcript,
                 self._voice_request_failed,
             )
@@ -2125,14 +2169,16 @@ class MainWindow(QMainWindow):
             self.refresh_memory(); self._answer(memory_result); return
         if self._try_desktop_command(transcript): return
         cfg = load_config()
-        local = (quick_reply(transcript, cfg["assistant"]["name"], cfg["assistant"].get("user_name", ""))
+        local = (quick_reply(transcript, cfg["assistant"]["name"], cfg["assistant"].get("user_name", ""),
+                             cfg["assistant"].get("language", "auto"))
                  if cfg["assistant"].get("quick_local_replies", True) else None)
         local = local or local_core_response(transcript)
         if local:
             self._local_answer(transcript, local); return
         if is_weather_query(transcript) and plugin_enabled("weather"):
             self.status.setText("● READING LIVE WEATHER")
-            self._task(weather_report, (requested_location(transcript),),
+            self._task(weather_report, (requested_location(transcript),
+                                        response_language(transcript, cfg["assistant"].get("language", "auto"))),
                        lambda answer: self._local_answer(transcript, answer)); return
         if prepared_answer:
             self.client.record_exchange(transcript, prepared_answer)
@@ -2142,7 +2188,8 @@ class MainWindow(QMainWindow):
             self.append("SYSTEM", "Speech recognition is working. Connect Gemini in Settings so I can answer that request.")
             self.status.setText("● SPEECH WORKS — GEMINI SETUP REQUIRED")
             self.reactor.set_state("ONLINE"); QTimer.singleShot(500, self._sync_always_listener); return
-        self._active_mode = route_mode(transcript) if self.chat_mode == "auto" else self.chat_mode
+        self._active_mode = (route_mode(transcript, cfg["assistant"].get("intelligence_profile", "adaptive"))
+                             if self.chat_mode == "auto" else self.chat_mode)
         state = "DEEP SEARCHING" if self._active_mode == "deep_search" else "REFLECTING" if self._active_mode == "reflection" else "PROCESSING"
         self.status.setText("● " + state)
         self._task(self.client.chat, (transcript, self._active_mode), self._answer)

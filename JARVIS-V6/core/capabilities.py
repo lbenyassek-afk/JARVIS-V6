@@ -26,6 +26,8 @@ def snapshot(registry=None) -> list[dict]:
          "detail": "Gemini fast model" if gemini_ready else "Connect Gemini"},
         {"id": "deep_research", "state": "ready" if gemini_ready else "setup_required",
          "detail": "Google Search grounding with cited sources" if gemini_ready else "Connect Gemini"},
+        {"id": "multilingual", "state": "ready",
+         "detail": "Automatic or selected language across chat, memory, speech and neural voice"},
         {"id": "memory", "state": "ready" if cfg["memory"].get("enabled", True) else "disabled",
          "detail": "Encrypted organized memory and relevant retrieval"},
         {"id": "voice_input", "state": "ready" if voice_ready else "unavailable",

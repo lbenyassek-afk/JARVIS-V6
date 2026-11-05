@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .config import APP_DIR
 from .metrics import measure
+from .language import DEFAULT_NEURAL_VOICES, voice_for_text
 
 
 BRITISH_VOICES = {
@@ -17,6 +18,12 @@ BRITISH_VOICES = {
     "Thomas — Cinematic British male": "en-GB-ThomasNeural",
     "Libby — British female": "en-GB-LibbyNeural",
     "Maisie — British female": "en-GB-MaisieNeural",
+    "Henri — voix française": "fr-FR-HenriNeural",
+    "Hamed — صوت عربي": "ar-SA-HamedNeural",
+    "Álvaro — voz española": "es-ES-AlvaroNeural",
+    "Conrad — deutsche Stimme": "de-DE-ConradNeural",
+    "Diego — voce italiana": "it-IT-DiegoNeural",
+    "Duarte — voz portuguesa": "pt-PT-DuarteNeural",
 }
 
 
@@ -36,10 +43,12 @@ def _spoken_text(text: str) -> str:
 
 
 def synthesize(text: str, voice: str = "en-GB-ThomasNeural",
-               rate: int = 0, pitch: int = 0) -> str:
-    """Create one temporary British neural-voice response for Qt playback."""
+               rate: int = 0, pitch: int = 0, language: str = "auto") -> str:
+    """Create one temporary neural-voice response in the answer language."""
     import edge_tts
-    if voice not in BRITISH_VOICES.values():
+    voice = voice_for_text(text, voice, language)
+    allowed = set(BRITISH_VOICES.values()) | set(DEFAULT_NEURAL_VOICES.values())
+    if voice not in allowed:
         voice = "en-GB-ThomasNeural"
     rate = max(-20, min(20, int(rate)))
     pitch = max(-10, min(10, int(pitch)))
@@ -66,7 +75,7 @@ def synthesize(text: str, voice: str = "en-GB-ThomasNeural",
     with measure("voice.neural_synthesis"):
         asyncio.run(create())
     if not temporary.exists() or temporary.stat().st_size < 256:
-        raise RuntimeError("British neural voice returned no audio")
+        raise RuntimeError("Neural voice returned no audio")
     temporary.replace(path)
     if cacheable:
         cached = sorted(path.parent.glob("*.mp3"), key=lambda item: item.stat().st_mtime, reverse=True)

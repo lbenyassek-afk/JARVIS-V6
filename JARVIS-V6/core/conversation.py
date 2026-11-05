@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import re
 import sqlite3
 
 from . import config
 from .memory import sensitive
 from .crypto import open_text, seal, encrypted
+from .retrieval import relevance
 
 
 def _connect() -> sqlite3.Connection:
@@ -67,11 +67,8 @@ def recent_messages(limit: int = 24) -> list[dict]:
 def relevant_messages(query: str, recent_limit: int = 20, older_limit: int = 6) -> list[dict]:
     recent = recent_messages(recent_limit)
     recent_ids = {row["id"] for row in recent}
-    words = {word for word in re.findall(r"[a-z0-9]{4,}", query.casefold()) if word not in {
-        "this", "that", "with", "from", "have", "what", "when", "where", "would", "could"
-    }}
     older = []
-    if words:
+    if str(query).strip():
         try:
             with _connect() as database:
                 candidates = database.execute(
@@ -81,15 +78,28 @@ def relevant_messages(query: str, recent_limit: int = 20, older_limit: int = 6) 
         except (OSError, sqlite3.Error):
             candidates = []
         scored = []
+        decoded = {}
         for row in candidates:
             if row[0] in recent_ids:
                 continue
             content = open_text(row[2])
-            haystack = content.casefold()
-            score = sum(1 for word in words if word in haystack)
+            decoded[row[0]] = (row[0], row[1], content)
+            score = relevance(query, content)
             if score:
                 scored.append((score, (row[0], row[1], content)))
-        selected = [item[1] for item in sorted(scored, key=lambda item: (-item[0], -item[1][0]))[:older_limit]]
+        selected_ids = []
+        for _score, row in sorted(scored, key=lambda item: (-item[0], -item[1][0])):
+            pair_ids = [row[0]]
+            neighbour_id = row[0] + 1 if row[1] == "user" else row[0] - 1
+            neighbour = decoded.get(neighbour_id)
+            if neighbour and neighbour[1] != row[1]:
+                pair_ids.append(neighbour_id)
+            for row_id in sorted(pair_ids):
+                if row_id not in selected_ids and len(selected_ids) < older_limit:
+                    selected_ids.append(row_id)
+            if len(selected_ids) >= older_limit:
+                break
+        selected = [decoded[row_id] for row_id in selected_ids]
         selected.sort(key=lambda row: row[0])
         older = [{"id": row[0], "role": row[1], "content": row[2]} for row in selected]
     return [{"role": row["role"], "content": row["content"]} for row in older + recent]

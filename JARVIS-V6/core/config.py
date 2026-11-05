@@ -16,6 +16,7 @@ DEFAULTS = {
         "language": "auto",
         "tone": "warm_calm",
         "response_length": "balanced",
+        "intelligence_profile": "adaptive",
         "serious_mode": False,
         "quick_local_replies": True,
         "daily_focus": "",
@@ -44,7 +45,7 @@ DEFAULTS = {
     "voice": {
         "speak_replies": True,
         "always_listening": True,
-        "english_only": True,
+        "english_only": False,
         "input_engine": "fast_free",
         "activation_mode": "natural",
         "output_engine": "edge_free",
@@ -61,6 +62,7 @@ DEFAULTS = {
         "capture_profile_version": 3,
         "recognition_profile_version": 4,
         "output_profile_version": 5,
+        "multilingual_profile_version": 1,
     },
     "desktop": {
         "enabled": True,
@@ -162,7 +164,7 @@ def load_config() -> dict:
     # slower or retired model after an upgrade.
     merged["llm"] = deepcopy(DEFAULTS["llm"])
     # Migrate the original voice profile to the cleaner premium voice once.
-    # British voice. Users can still select any available voice in Settings.
+    # Users can still select any available neural voice in Settings.
     saved_voice = data.get("voice", {}) if isinstance(data, dict) else {}
     if (int(saved_voice.get("profile_version", 1)) < 2 and
             merged["voice"].get("british_voice") == "en-GB-RyanNeural"):
@@ -185,6 +187,11 @@ def load_config() -> dict:
         merged["voice"]["speech_rate"] = -1
         merged["voice"]["speech_pitch"] = -4
         merged["voice"]["output_profile_version"] = 5
+    if int(saved_voice.get("multilingual_profile_version", 0)) < 1:
+        # Previous versions silently rejected non-English Gemini speech. V6 now
+        # follows the configured language, or the speaker when set to Automatic.
+        merged["voice"]["english_only"] = False
+        merged["voice"]["multilingual_profile_version"] = 1
     saved_desktop = data.get("desktop", {}) if isinstance(data, dict) else {}
     if int(saved_desktop.get("access_profile_version", 1)) < 2:
         merged["desktop"]["enabled"] = True

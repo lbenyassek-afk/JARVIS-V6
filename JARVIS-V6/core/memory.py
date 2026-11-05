@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .config import APP_DIR, load_config
 from .crypto import open_text, seal, encrypted
+from .retrieval import relevance
 
 
 MEMORY_PATH = APP_DIR / "memory.json"
@@ -139,7 +140,7 @@ def update(category: str, key: str, *, value: str | None = None,
 
 
 def search(query: str = "", limit: int = 12, scope: str | None = None) -> list[dict]:
-    query = str(query).strip().lower()
+    query = str(query).strip()
     scope = scope or str(load_config().get("assistant", {}).get("active_mode", "personal"))
     rows = []
     for category, items in load_memory().items():
@@ -152,8 +153,8 @@ def search(query: str = "", limit: int = 12, scope: str | None = None) -> list[d
                 continue
             if sensitive(key, value):
                 continue
-            haystack = f"{category} {key} {value}".lower()
-            matches = 1 if not query else sum(1 for word in query.split() if word in haystack)
+            haystack = f"{category} {key} {value}"
+            matches = 1 if not query else relevance(query, haystack)
             importance = int(entry.get("importance", 3)) if isinstance(entry, dict) else 3
             pinned = bool(entry.get("pinned", False)) if isinstance(entry, dict) else False
             score = matches * 10 + importance + (8 if pinned else 0)

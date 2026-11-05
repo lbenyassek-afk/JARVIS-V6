@@ -7,6 +7,8 @@ import re
 import wave
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from .config import load_config
 from .conversation import relevant_messages, remember_exchange
@@ -15,6 +17,7 @@ from .secrets import get_secret
 from .providers import select as select_provider
 from .metrics import measure
 from .tasks import Step
+from .language import normalize_language, normalized_text
 
 
 class LLMError(RuntimeError):
@@ -34,12 +37,42 @@ def valid_gemini_key_format(value: str) -> bool:
     return bool(re.fullmatch(r"AIza[A-Za-z0-9_-]{20,}", normalize_gemini_key(value)))
 
 
-def route_mode(user_text: str) -> str:
+def route_mode(user_text: str, profile: str = "adaptive") -> str:
     """Choose the lightest mode that can answer the request reliably."""
-    text = str(user_text).casefold()
-    if re.search(r"\b(latest|today|current|news|source|research|compare prices|who is|when did)\b", text):
+    text = normalized_text(user_text)
+    research_phrases = (
+        "latest", "today", "current", "news", "source", "research", "compare prices", "who is", "when did",
+        "dernier", "aujourd hui", "actuel", "actualite", "source", "recherche", "compare les prix",
+        "ultimo", "hoy", "actual", "noticias", "fuente", "investiga", "comparar precios",
+        "aktuell", "heute", "nachrichten", "quelle", "recherchiere",
+        "ultimo", "oggi", "attuale", "notizie", "fonte", "ricerca",
+        "hoje", "atual", "noticias", "fonte", "pesquisa",
+        "احدث", "أحدث", "اليوم", "حالي", "اخبار", "أخبار", "مصدر", "ابحث", "اسعار", "أسعار",
+    )
+    reflection_phrases = (
+        "decide", "decision", "strategy", "trade offs", "analyse", "analyze", "reflect", "plan my", "risk", "pros and cons",
+        "decider", "decision", "strategie", "analyser", "risque", "avantages et inconvenients",
+        "decidir", "decision", "estrategia", "analizar", "riesgo", "ventajas y desventajas",
+        "entscheiden", "entscheidung", "strategie", "analysieren", "risiko", "vor und nachteile",
+        "decidere", "decisione", "strategia", "analizzare", "rischio", "pro e contro",
+        "decidir", "decisao", "estrategia", "analisar", "risco", "pros e contras",
+        "قرر", "قرار", "استراتيجية", "حلل", "مخاطر", "ايجابيات وسلبيات", "إيجابيات وسلبيات",
+    )
+    def contains(phrase: str) -> bool:
+        if " " in phrase:
+            return bool(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text, re.UNICODE))
+        for token in text.split():
+            if token == phrase:
+                return True
+            if len(phrase) >= 5 and token.startswith(phrase):
+                if token[len(phrase):] in ("s", "e", "es", "er", "ere", "eres"):
+                    return True
+        return False
+    if any(contains(phrase) for phrase in research_phrases):
         return "deep_search"
-    if re.search(r"\b(decide|decision|strategy|trade-?offs?|analyse|analyze|reflect|plan my|risk|pros and cons)\b", text):
+    if any(contains(phrase) for phrase in reflection_phrases):
+        return "reflection"
+    if profile == "thorough" and len(text.split()) >= 18 and "?" not in str(user_text):
         return "reflection"
     return "chat"
 
@@ -170,6 +203,9 @@ class LLMClient:
         # Keep TLS and HTTP connections warm between turns. Reopening a new
         # connection for every sentence adds latency without improving answers.
         self.session = requests.Session()
+        retry = Retry(total=1, connect=1, read=1, backoff_factor=.2,
+                      status_forcelist=(502, 503, 504), allowed_methods=frozenset({"POST"}))
+        self.session.mount("https://", HTTPAdapter(max_retries=retry))
 
     def _post(self, url, **kwargs):
         response = self.session.post(url, **kwargs)
@@ -287,7 +323,7 @@ class LLMClient:
         return (" ".join(str(data.get("goal") or goal).split())[:300], steps)
 
     def chat_audio(self, pcm_bytes: bytes, sample_rate: int, mode: str = "chat",
-                   english_only: bool = True, require_wake: bool = False,
+                   english_only: bool = False, require_wake: bool = False,
                    wake_phrase: str = "hey jarvis") -> dict:
         """Understand one voice turn and answer it in a single Gemini request."""
         key = get_secret("gemini_api_key")
@@ -303,9 +339,13 @@ class LLMClient:
             "deep_search": "Research with Google Search, compare reliable sources and cite them.",
             "reflection": "Think carefully about assumptions and tradeoffs before recommending an action.",
         }[mode]
+        selected_language = normalize_language(cfg["assistant"].get("language", "auto"))
         language_rule = (
             "If the speech is not English, return <status>non_english</status>."
-            if english_only else "Understand the spoken language and answer in that same language."
+            if english_only else
+            f"Understand the spoken language and answer in configured language '{selected_language}'."
+            if selected_language != "auto" else
+            "Understand the spoken language and answer in that same language."
         )
         system += (
             "\n\n[VOICE TURN]\n" + mode_rule + " " + language_rule +
@@ -410,7 +450,7 @@ class LLMClient:
         mode = mode if mode in ("auto", "chat", "deep_search", "reflection") else "auto"
         if mode == "auto":
             latest = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-            mode = route_mode(latest)
+            mode = route_mode(latest, cfg["assistant"].get("intelligence_profile", "adaptive"))
         mode_rules = {
             "chat": (
                 "[CHAT MODE] Answer quickly and directly. Resolve the user's intent from "
@@ -419,8 +459,9 @@ class LLMClient:
             ),
             "deep_search": (
                 "[DEEP SEARCH MODE] Research the question using the supplied Google Search "
-                "tool. Compare credible sources, distinguish current facts from inference, "
-                "and give a concise evidence-based answer. Never invent a citation."
+                "tool. Compare independent credible sources, distinguish current facts from "
+                "inference, include relevant dates, surface meaningful disagreement, and give "
+                "a structured evidence-based answer. Never invent a citation."
             ),
             "reflection": (
                 "[REFLECTION MODE] Think carefully about assumptions, tradeoffs, second-order "
@@ -438,12 +479,20 @@ class LLMClient:
                  if mode == "chat" else
                  cfg["llm"].get("smart_model", "gemini-3.5-flash-lite"))
         model = _supported_model(model)
+        profile = cfg["assistant"].get("intelligence_profile", "adaptive")
+        length = cfg["assistant"].get("response_length", "balanced")
+        token_budget = {"concise": 500, "balanced": 900, "detailed": 1600}.get(length, 900)
+        if profile == "fast":
+            token_budget = min(token_budget, 650)
+        elif profile == "thorough":
+            token_budget = max(token_budget, 1300)
         generation = {
             "temperature": .25 if mode == "deep_search" else .4,
-            "maxOutputTokens": 700 if mode == "chat" else 1800,
+            "maxOutputTokens": token_budget if mode == "chat" else max(1800, token_budget),
         }
         if mode == "reflection":
-            generation["thinkingConfig"] = {"thinkingBudget": 2048}
+            thinking = {"fast": 1024, "adaptive": 2048, "thorough": 3072}.get(profile, 2048)
+            generation["thinkingConfig"] = {"thinkingBudget": thinking}
         payload = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": contents,
@@ -477,6 +526,8 @@ class LLMClient:
             candidate = data["candidates"][0]
             parts = candidate["content"]["parts"]
             answer = "".join(part.get("text", "") for part in parts).strip()
+            if not answer:
+                raise ValueError("empty answer")
             if mode == "deep_search":
                 chunks = candidate.get("groundingMetadata", {}).get("groundingChunks", [])
                 sources = []

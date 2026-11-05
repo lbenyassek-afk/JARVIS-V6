@@ -26,8 +26,15 @@ memory, credentials, executable, installer, update channel and prerelease track.
   and Minimal Assistant, selectable directly from the main window or Settings.
 - Six coordinated minimal colour themes plus an optional custom accent. Theme
   changes recolour the HUD, panels, controls, waveform and presence visual together.
-- Voice customization for British voice, preview, speed, pitch, volume, capture
-  engine, activation behaviour and microphone selection.
+- Voice customization for multilingual neural voices, preview, speed, pitch,
+  volume, capture engine, activation behaviour and microphone selection.
+- Multilingual intelligence for English, French, Arabic, Spanish, German, Italian
+  and Portuguese, with automatic reply-language detection, language-specific free
+  speech recognition and matching Edge neural voices.
+- Fast, Adaptive and Thorough intelligence profiles with configurable tone and
+  response length, multilingual research routing and resilient Gemini requests.
+- Unicode-aware encrypted memory and conversation retrieval, including older
+  relevant exchanges in any supported language without copying the full history.
 - Desktop Mission Control for goal-based allowlisted plans, mouse-position capture,
   step reordering, live progress, emergency cancellation and encrypted action history.
 - Windows app-aware control using accessibility names for windows, buttons, menu items

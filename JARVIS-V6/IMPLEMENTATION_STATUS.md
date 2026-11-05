@@ -13,7 +13,9 @@
 - Windows accessibility targeting for named controls and fields, plus encrypted reusable routines.
 - Session-only `/desktop control` conversation mode for natural typed or spoken goals,
   with structured Gemini planning and mandatory local allowlist validation.
-- Guided Gemini registration and a 17-item honest capabilities dashboard.
+- Guided Gemini registration and a 20-item honest capabilities dashboard.
+- Seven-language chat, speech, neural voice, research routing and Unicode-aware
+  retrieval, with Fast, Adaptive and Thorough intelligence profiles.
 - Independent V6 application, storage, credential, installer and update identities.
 - Inherited V5.3 chat, Gemini diagnostics, voice, memory encryption, recovery,
   backups, workspaces, permissions and bounded desktop actions.

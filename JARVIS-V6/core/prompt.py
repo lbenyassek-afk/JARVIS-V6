@@ -33,6 +33,7 @@ def system_messages(user_text: str) -> list[dict]:
         "[CURRENT ASSISTANT SETTINGS]\n"
         f"User preferred name: {cfg['user_name'] or 'not configured'}\n"
         f"Language: {cfg['language']}\nTone: {cfg['tone']}\n"
+        f"Intelligence profile: {cfg.get('intelligence_profile', 'adaptive')}\n"
         f"Active context: {cfg.get('active_mode', 'personal')}\n"
         f"Response length: {cfg['response_length']}\n"
         f"Current daily focus: {cfg.get('daily_focus') or 'not configured'}\n"

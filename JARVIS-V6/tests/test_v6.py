@@ -97,6 +97,7 @@ class V6Tests(unittest.TestCase):
                 conversation.remember_exchange(f'Routine note {index}', f'Routine answer {index}')
             context = conversation.relevant_messages('What did we decide about Atlas?', 6, 4)
             self.assertTrue(any('Atlas' in row['content'] for row in context))
+            self.assertTrue(any('saved as the client project' in row['content'] for row in context))
             conversation.remember_exchange('Do not save this: private thought', 'Understood')
             self.assertFalse(any('private thought' in row['content'] for row in conversation.recent_messages(40)))
     def test_retired_model_retries_only_once(self):
