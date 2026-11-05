@@ -15,6 +15,7 @@ from core.audit import recent as recent_actions
 from core.config import load_config, save_config
 from core.health import run as run_health
 from core.metrics import snapshot as metric_snapshot
+from core.benchmarks import run_suite as run_benchmarks
 from core.workspace import delete as delete_record
 from core.workspace import records, save
 
@@ -186,13 +187,27 @@ class PerformanceDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent); self.setWindowTitle("JARVIS V6 // PERFORMANCE"); self.resize(680, 480)
         layout = QVBoxLayout(self); self.list = QListWidget(); layout.addWidget(self.list)
-        refresh = QPushButton("REFRESH"); refresh.clicked.connect(self.refresh); layout.addWidget(refresh); self.refresh()
+        row = QHBoxLayout()
+        refresh = QPushButton("REFRESH LATENCY"); refresh.clicked.connect(self.refresh)
+        benchmark = QPushButton("RUN RELIABILITY BENCHMARK"); benchmark.setObjectName("primary")
+        benchmark.clicked.connect(self.benchmark)
+        row.addWidget(refresh); row.addWidget(benchmark); layout.addLayout(row); self.refresh()
 
     def refresh(self):
         self.list.clear(); rows = metric_snapshot()
         if not rows: self.list.addItem("No timed operations recorded in this session yet.")
         for row in rows:
             self.list.addItem(f"{row['name']}  /  latest {row['latest_ms']} ms  /  average {row['average_ms']} ms  /  max {row['maximum_ms']} ms  /  {row['count']} run(s)")
+
+    def benchmark(self):
+        report = run_benchmarks(write_report=True)
+        self.list.clear()
+        self.list.addItem(
+            f"RELIABILITY SCORE  /  {report['passed']} PASSED  /  {report['failed']} FAILED  /  {report['total_ms']} ms")
+        for case in report["cases"]:
+            icon = "●" if case["passed"] else "○"
+            self.list.addItem(f"{icon}  {case['name']}  /  {case['duration_ms']} ms\n     {case['detail']}")
+        self.list.addItem("Report saved locally: " + report["report_path"])
 
 
 class ActivityDialog(QDialog):

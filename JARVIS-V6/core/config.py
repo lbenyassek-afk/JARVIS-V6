@@ -78,6 +78,11 @@ DEFAULTS = {
         "step_delay": 0.35,
         "max_steps": 20,
         "execution_mode": "plan_then_execute",
+        "verify_results": True,
+        "verification_retries": 1,
+        "verification_settle_seconds": 0.12,
+        "checkpoint_missions": True,
+        "isolation_profile": "host_reviewed",
     },
     "permissions": {
         "low_risk": "automatic",

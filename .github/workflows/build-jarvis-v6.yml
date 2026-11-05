@@ -33,6 +33,14 @@ jobs:
         working-directory: JARVIS-V6
         run: python -m unittest discover -s tests -v
 
+      - name: Run offline reliability benchmark
+        working-directory: JARVIS-V6
+        run: python benchmark.py
+
+      - name: Validate installed dependencies
+        working-directory: JARVIS-V6
+        run: python -m pip check
+
       - name: Build the windowed application
         working-directory: JARVIS-V6
         shell: pwsh

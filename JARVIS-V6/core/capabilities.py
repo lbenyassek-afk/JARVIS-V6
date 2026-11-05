@@ -5,6 +5,8 @@ import sys
 
 from .config import load_config
 from .secrets import get_secret
+from .adapters import platform_registry
+from .isolation import selected as selected_isolation
 
 
 def snapshot(registry=None) -> list[dict]:
@@ -18,6 +20,8 @@ def snapshot(registry=None) -> list[dict]:
     gemini_ready = bool(get_secret("gemini_api_key"))
     desktop_ready = bool(desktop_actions and not desktop_errors)
     app_aware_ready = desktop_ready and sys.platform == "win32" and importlib.util.find_spec("pywinauto") is not None
+    isolation = selected_isolation(cfg)
+    adapters = platform_registry().status()
     return [
         {"id": "local_core", "state": "ready", "detail": "Bounded offline commands and local memory search"},
         {"id": "gemini", "state": "configured" if gemini_ready else "setup_required",
@@ -41,6 +45,16 @@ def snapshot(registry=None) -> list[dict]:
         {"id": "app_aware_desktop", "state": "ready" if app_aware_ready else "unavailable",
          "detail": "Named Windows controls and fields" if app_aware_ready else "Requires the Windows application build"},
         {"id": "desktop_routines", "state": "ready", "detail": "Encrypted reusable reviewed missions"},
+        {"id": "verified_execution", "state": "ready",
+         "detail": "Postcondition contracts, bounded retries and encrypted mission checkpoints"},
+        {"id": "mission_graph", "state": "ready",
+         "detail": "Validated dependency graph with cycle detection and blocked-step propagation"},
+        {"id": "isolation", "state": "ready" if isolation.available else "unavailable",
+         "detail": f"{isolation.name}: {isolation.detail}"},
+        {"id": "typed_adapters", "state": "foundation",
+         "detail": f"{sum(1 for item in adapters if item.available)} available typed adapter(s); arbitrary calls are blocked"},
+        {"id": "reliability_benchmarks", "state": "ready",
+         "detail": "Offline repeatable reliability, recovery, memory and security benchmark runner"},
         {"id": "appearance", "state": "ready", "detail": "Six themes, custom accent and five presence designs"},
         {"id": "workspaces", "state": "ready", "detail": "Personal, School and Business contexts"},
         {"id": "weather", "state": "ready" if cfg.get("plugins", {}).get("enabled", {}).get("weather", True) else "disabled",

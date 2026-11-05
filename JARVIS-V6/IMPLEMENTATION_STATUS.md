@@ -1,5 +1,23 @@
 # V6 implementation status
 
+## Reliability architecture upgrade — 5 November 2026
+
+- Added a dependency-aware mission graph with cycle rejection, ready-node
+  scheduling, dependent-step blocking and encrypted crash checkpoints.
+- Added complete backend preflight so every action, value and approval is checked
+  before the first desktop side effect.
+- Added postcondition contracts and safe bounded retries for clipboard, pointer,
+  screenshot, focused-window, text-field and window-layout actions.
+- Added a true simulation profile that validates a mission without invoking any
+  desktop handler.
+- Added typed adapter and plugin operation contracts, exact network domains and
+  SHA-256 payload integrity validation.
+- Added lightweight local related-memory ranking and explicit memory links while
+  preserving the encrypted storage format.
+- Added an offline reliability benchmark in the Performance Monitor and at
+  `python benchmark.py`.
+- Added the visual V7 product map and measurable private-beta release gates.
+
 ## Implemented in Alpha 1
 
 - Original V6 application icon built around a bold titanium J-reactor silhouette,

@@ -9,13 +9,15 @@ class Provider:
     name: str
     installed: bool
     local: bool = False
+    capabilities: tuple[str, ...] = ()
 
 
 CATALOG = (
-    Provider("gemini", "Google Gemini", True),
-    Provider("local", "Local model", False, True),
-    Provider("openai", "OpenAI", False),
-    Provider("anthropic", "Anthropic", False),
+    Provider("gemini", "Google Gemini", True, False,
+             ("chat", "vision", "audio_input", "grounded_search", "structured_output")),
+    Provider("local", "Local model", False, True, ("chat",)),
+    Provider("openai", "OpenAI", False, False, ("chat", "structured_output")),
+    Provider("anthropic", "Anthropic", False, False, ("chat", "structured_output")),
 )
 
 

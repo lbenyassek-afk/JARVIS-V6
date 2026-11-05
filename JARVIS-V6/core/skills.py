@@ -19,6 +19,14 @@ class Action:
     values: tuple[str, ...] = ()
     sensitive: bool = False
     validator: Callable[[str], str] | None = None
+    # A verifier observes the resulting state after the handler returns. It
+    # receives the reviewed value and the handler result and returns either a
+    # bool or a VerificationResult (kept loosely typed to avoid a dependency
+    # cycle). Actions without a verifier remain honestly "reported", rather
+    # than being presented as externally verified.
+    verifier: Callable[[str, str], object] | None = None
+    retry_safe: bool = False
+    read_only: bool = False
 
 
 class Registry:

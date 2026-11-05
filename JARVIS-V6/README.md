@@ -66,6 +66,17 @@ memory, credentials, executable, installer, update channel and prerelease track.
 - Separate `JARVIS V6.exe`, installer identity and prerelease workflow.
 - Local offline core for time, date, status, local memory search and capability help.
 - Structured execution-plan validation against the desktop action allowlist.
+- Complete mission preflight before the first side effect, dependency-aware
+  execution graphs, encrypted crash checkpoints and blocked-step propagation.
+- Postcondition verification for supported desktop actions, with bounded retries
+  only where repeating the operation is safe.
+- Reviewed desktop and no-execution simulation profiles selectable in Settings.
+- Typed plugin operation and adapter contracts with exact domain allowlists and
+  optional SHA-256 payload integrity checks.
+- Hybrid encrypted memory retrieval that combines exact multilingual relevance
+  with a lightweight local related-memory signal.
+- A repeatable offline reliability benchmark available from Performance Monitor
+  or with `python benchmark.py`.
 - V6 memory metadata for importance, pinning, source and update history.
 - Authenticated local companion command inbox. It queues commands for the main
   permission system and never executes desktop actions by itself.
@@ -76,5 +87,9 @@ desktop-control acceptance tests pass.
 
 ## Development
 
-Run `python -m unittest discover -s tests -v`, then `python main.py`.
+Run `python -m unittest discover -s tests -v`, `python benchmark.py`, then
+`python main.py`.
 Windows packaging is handled by `.github/workflows/build-jarvis-v6.yml`.
+
+See [V7_PRODUCT_MAP.md](V7_PRODUCT_MAP.md) for the visual architecture, current
+evidence, release gates and the recommended V7 sequence.

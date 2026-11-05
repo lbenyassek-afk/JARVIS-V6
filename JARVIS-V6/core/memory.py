@@ -9,6 +9,7 @@ from pathlib import Path
 from .config import APP_DIR, load_config
 from .crypto import open_text, seal, encrypted
 from .retrieval import relevance
+from .semantic import similarity
 
 
 MEMORY_PATH = APP_DIR / "memory.json"
@@ -65,7 +66,8 @@ def save_memory(memory: dict) -> None:
 
 
 def remember(category: str, key: str, value: str, *, importance: int = 3,
-             pinned: bool = False, source: str = "user") -> str:
+             pinned: bool = False, source: str = "user",
+             related_to: tuple[str, ...] | None = None) -> str:
     category = category if category in CATEGORIES else "notes"
     key, value = str(key).strip(), str(value).strip()
     if not key or not value:
@@ -81,6 +83,10 @@ def remember(category: str, key: str, value: str, *, importance: int = 3,
         "importance": max(1, min(int(importance), 5)),
         "pinned": bool(pinned),
         "source": str(source)[:40],
+        "related_to": (list(dict.fromkeys(str(item)[:120] for item in related_to
+                                           if str(item).strip()))[:12]
+                       if related_to is not None else
+                       previous.get("related_to", []) if isinstance(previous, dict) else []),
         "created": previous.get("created", now) if isinstance(previous, dict) else now,
         "updated": now,
     }
@@ -155,16 +161,45 @@ def search(query: str = "", limit: int = 12, scope: str | None = None) -> list[d
                 continue
             haystack = f"{category} {key} {value}"
             matches = 1 if not query else relevance(query, haystack)
+            semantic = 0.0 if not query else similarity(query, haystack)
             importance = int(entry.get("importance", 3)) if isinstance(entry, dict) else 3
             pinned = bool(entry.get("pinned", False)) if isinstance(entry, dict) else False
-            score = matches * 10 + importance + (8 if pinned else 0)
-            if matches:
+            score = matches * 10 + int(semantic * 18) + importance + (8 if pinned else 0)
+            if matches or semantic >= .16:
                 rows.append({"category": category, "key": key, "value": value,
                              "scope": item_scope, "importance": importance,
                              "pinned": pinned, "source": entry.get("source", "legacy") if isinstance(entry, dict) else "legacy",
-                             "updated": entry.get("updated", "") if isinstance(entry, dict) else "", "score": score})
+                             "updated": entry.get("updated", "") if isinstance(entry, dict) else "",
+                             "related_to": entry.get("related_to", []) if isinstance(entry, dict) else [],
+                             "match": "lexical" if matches else "related", "score": score})
     rows.sort(key=lambda row: (-row["score"], row["category"], row["key"]))
     return rows[:limit]
+
+
+def related(category: str, key: str, limit: int = 8) -> list[dict]:
+    """Return explicit links first, then locally related memories with provenance."""
+    memory = load_memory()
+    entry = memory.get(category, {}).get(key)
+    if not isinstance(entry, dict):
+        return []
+    anchors = set(str(item).casefold() for item in entry.get("related_to", []))
+    query = f"{key} {entry.get('value', '')}"
+    rows = []
+    for row in search(query, 50, entry.get("scope", "global")):
+        identity = f"{row['category']}/{row['key']}"
+        if identity == f"{category}/{key}":
+            continue
+        row = dict(row)
+        row["relationship"] = "explicit" if identity.casefold() in anchors else "similar"
+        rows.append(row)
+    rows.sort(key=lambda row: (row["relationship"] != "explicit", -row["score"]))
+    return rows[:max(1, min(int(limit), 30))]
+
+
+def statistics() -> dict:
+    memory = load_memory(); counts = {category: len(memory.get(category, {})) for category in CATEGORIES}
+    return {"total": sum(counts.values()), "categories": counts,
+            "encrypted": MEMORY_PATH.exists() and encrypted(MEMORY_PATH.read_text(encoding="utf-8"))}
 
 
 def prompt_block(query: str, budget: int = 1800) -> str:

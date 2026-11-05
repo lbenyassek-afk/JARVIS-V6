@@ -4,6 +4,8 @@ import ctypes
 import re
 import sys
 
+from .verification import VerificationResult
+
 
 SEPARATOR = "||"
 
@@ -46,6 +48,11 @@ def _active_window():
     if not handle:
         raise RuntimeError("No active application window was found")
     return desktop.window(handle=handle)
+
+
+def active_window_title() -> str:
+    window = _active_window()
+    return " ".join(str(window.window_text() or "").split())
 
 
 def _control_rows(window=None, limit: int = 80) -> list[dict]:
@@ -155,6 +162,12 @@ def focus_window(value: str) -> str:
     return f"Focused '{title}'."
 
 
+def verify_focused_window(value: str, _result: str) -> VerificationResult:
+    title = active_window_title()
+    matched = str(value).casefold().strip() in title.casefold()
+    return VerificationResult(matched, f"Active window observed as '{title or 'unknown'}'")
+
+
 def window_layout(value: str) -> str:
     action = str(value).casefold().strip()
     if action not in ("minimize", "maximize", "restore"):
@@ -162,3 +175,29 @@ def window_layout(value: str) -> str:
     window = _active_window()
     getattr(window, action)()
     return f"{action.title()}d the active window."
+
+
+def verify_window_layout(value: str, _result: str) -> VerificationResult:
+    action = str(value).casefold().strip()
+    window = _active_window()
+    if action == "minimize":
+        matched = bool(window.is_minimized())
+    elif action == "maximize":
+        matched = bool(window.is_maximized())
+    else:
+        matched = not window.is_minimized() and not window.is_maximized()
+    return VerificationResult(matched, f"Window layout observed as {action}")
+
+
+def verify_control_text(value: str, _result: str) -> VerificationResult:
+    target, expected = split_target_text(value)
+    name, control = _matching_controls(target)
+    candidates = []
+    for reader in (lambda: control.get_value(), lambda: control.window_text()):
+        try:
+            candidates.append(str(reader()))
+        except Exception:
+            pass
+    matched = expected in candidates or any(expected == item for item in candidates)
+    return VerificationResult(matched, f"Read back text from '{name}'" if matched
+                              else f"Could not confirm text in '{name}'")

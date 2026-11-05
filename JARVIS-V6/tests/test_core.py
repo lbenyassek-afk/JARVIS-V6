@@ -543,7 +543,7 @@ class CoreTests(unittest.TestCase):
             )
         self.assertEqual(progress, [(1, 1, "Test action")])
         self.assertEqual(audit_record.call_count, 2)
-        self.assertEqual(audit_record.call_args_list[-1].args[-1], "completed")
+        self.assertEqual(audit_record.call_args_list[-1].args[-1], "reported")
         self.assertEqual(calls, ["one"])
 
     def test_desktop_failure_identifies_the_exact_step(self):

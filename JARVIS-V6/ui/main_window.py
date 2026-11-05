@@ -969,6 +969,14 @@ class SettingsDialog(QDialog):
         self.screen_observation = QCheckBox(); self.screen_observation.setChecked(cfg["desktop"].get("screen_observation", True))
         self.automatic_actions = QCheckBox()
         self.automatic_actions.setChecked(cfg.get("permissions", {}).get("low_risk", "automatic") == "automatic")
+        self.verify_results = QCheckBox(); self.verify_results.setChecked(cfg["desktop"].get("verify_results", True))
+        self.verification_retries = QSpinBox(); self.verification_retries.setRange(0, 2)
+        self.verification_retries.setValue(int(cfg["desktop"].get("verification_retries", 1)))
+        self.execution_profile = QComboBox()
+        self.execution_profile.addItem("Reviewed desktop — executes approved actions", "host_reviewed")
+        self.execution_profile.addItem("Simulation — validate without executing", "dry_run")
+        self.execution_profile.setCurrentIndex(max(
+            0, self.execution_profile.findData(cfg["desktop"].get("isolation_profile", "host_reviewed"))))
         self.appearance = QComboBox()
         for value, theme in THEME_PRESETS.items():
             self.appearance.addItem(theme["label"], value)
@@ -1043,6 +1051,9 @@ class SettingsDialog(QDialog):
             ("Desktop Control", self.desktop),
             ("Transient screen context", self.screen_observation),
             ("Automatic low-risk actions", self.automatic_actions),
+            ("Verify desktop results", self.verify_results),
+            ("Safe verification retries", self.verification_retries),
+            ("Execution profile", self.execution_profile),
             ("Colour theme", self.appearance),
             ("Custom accent", self.accent_color),
             ("Appearance preview", self.appearance_preview),
@@ -1119,6 +1130,9 @@ class SettingsDialog(QDialog):
         cfg["desktop"]["enabled"] = self.desktop.isChecked()
         cfg["desktop"]["screen_observation"] = self.screen_observation.isChecked()
         cfg["desktop"]["automatic_approved_actions"] = self.automatic_actions.isChecked()
+        cfg["desktop"]["verify_results"] = self.verify_results.isChecked()
+        cfg["desktop"]["verification_retries"] = self.verification_retries.value()
+        cfg["desktop"]["isolation_profile"] = self.execution_profile.currentData()
         cfg["permissions"]["low_risk"] = "automatic" if self.automatic_actions.isChecked() else "ask"
         cfg["interface"]["appearance_profile"] = self.appearance.currentData()
         cfg["interface"]["accent_color"] = custom_accent
